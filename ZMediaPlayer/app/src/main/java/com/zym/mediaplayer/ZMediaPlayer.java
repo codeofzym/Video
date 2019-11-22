@@ -19,39 +19,72 @@ public class ZMediaPlayer {
         _init();
     }
 
-
+    /**
+     * set path of video file from disk
+     * */
     public void setDataResource(String path) {
         _setDataResource(path);
     }
 
+    /**
+     * set surface used by player to display
+     * */
     public void setSurface(Surface surface) {
         _setSurface(surface);
     }
 
+    /**
+     * start playback video
+     * */
     public void start() {
         _start();
     }
 
+    /**
+     * pause playback video
+     * */
     public void pause() {
         _pause();
     }
 
+    /**
+     * stop playback video
+     * */
     public void stop() {
         _stop();
     }
 
+    /**
+     * relase source of video
+     * */
     public void relase() {
         _relase();
     }
 
-    public void setLooping(int loop) {
-        _setLooping(loop);
+    /**
+     * set playback is looping
+     * @param loop true:playback is looping
+     *             false:playback is not looping
+     * */
+    public void setLooping(boolean loop) {
+        _setLooping(loop ? 1 : 0);
     }
 
+    /**
+     * set speed of playback
+     * @param speed 1.0f is normal speed
+     * */
     public void setPlaybackSpeed(float speed) {
         _setPlaybackSpeed(speed);
     }
 
+    /**
+     * set watermark and location of the watermark
+     *
+     * @param bitmap data of watermark
+     * @param left distance that left of the screen
+     * @param top distance that top of the screen
+     * */
     public void setWatermark(Bitmap bitmap, int left, int top) {
         _setWatermark(bitmap, left, top);
     }
