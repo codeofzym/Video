@@ -24,7 +24,7 @@ public class MainActivity extends AppCompatActivity {
         player.relase();
         player.setDataResource("");
         player.setSurface(null);
-        player.setLooping(1);
+        player.setLooping(true);
         player.setPlaybackSpeed(1.0f);
         player.setWatermark(null, 0, 0);
     }
