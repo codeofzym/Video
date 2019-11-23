@@ -1,49 +1,58 @@
 #include <jni.h>
 #include <string>
+#include <android/native_window_jni.h>
+#include <android/bitmap.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include <ZMediaPlayer.h>
 
 static void init(JNIEnv *env, jobject thiz) {
-
+    zp_init();
 }
 
 static void setDataResource(JNIEnv *env, jobject thiz, jstring path) {
-
+    const char *input = (*env).GetStringUTFChars(path, NULL);
+    zp_set_data_source(input);
 }
 
 
 static void setSurface(JNIEnv *env, jobject thiz, jobject surface) {
-
+    if(surface == NULL) {
+        zp_set_window(NULL);
+    } else {
+        ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
+        zp_set_window(window);
+    }
 }
 
 static void start(JNIEnv *env, jobject thiz) {
-
+    zp_start();
 }
 
 static void pause(JNIEnv *env, jobject thiz) {
-
+    zp_pause();
 }
 
 static void stop(JNIEnv *env, jobject thiz) {
-
+    zp_stop();
 }
 
-static void relase(JNIEnv *env, jobject thiz) {
-
+static void release(JNIEnv *env, jobject thiz) {
+    zp_release();
 }
 
 static void setLooping(JNIEnv *env, jobject thiz, jint looping) {
-
+    zp_set_looping(looping);
 }
 
 static void setPlaybackSpeed(JNIEnv *env, jobject thiz, jfloat speed) {
-
+    zp_set_playback_speed(speed);
 }
 
 static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, jint top) {
-
+    zp_set_watermark(NULL);
 }
 
 #ifdef __cplusplus
@@ -59,7 +68,7 @@ static JNINativeMethod sMethod[] = {
         {"_start", "()V",(void *)start},
         {"_pause", "()V",(void *)pause},
         {"_stop", "()V",(void *)stop},
-        {"_relase", "()V",(void *)relase},
+        {"_relase", "()V",(void *)release},
         {"_setLooping", "(I)V",(void *)setLooping},
         {"_setPlaybackSpeed", "(F)V",(void *)setPlaybackSpeed},
         {"_setWatermark", "(Landroid/graphics/Bitmap;II)V",(void *)setWatermark},
