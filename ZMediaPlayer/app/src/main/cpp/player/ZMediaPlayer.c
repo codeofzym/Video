@@ -17,6 +17,14 @@ static Watermark *p_mark = NULL;
 static float p_speed = 1.0f;
 static PlayStatus p_status = Idle;
 
+static int drawWatermark(uint8_t *buf) {
+
+}
+
+static void *threadDrawSurface(void *args) {
+
+}
+
 int zp_init() {
     p_status = Initialized;
     return ZP_SUCCESS;
