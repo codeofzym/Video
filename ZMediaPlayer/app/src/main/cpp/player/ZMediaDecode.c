@@ -7,14 +7,57 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+#include <sys/prctl.h>
+#include <pthread.h>
 
 static AVFormatContext* mAVFormatContext = NULL;
 static int mVideoIndex = -1;
 static AVCodecContext* mAVCodecContext = NULL;
 static int mFrameRate = 0;
+static ParamFrame mParamFrame;
 
 static AVFrame* mCurAVFrame = NULL;
 static AVFrame* mNextAVFrame = NULL;
+
+static pthread_t mTid;
+static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void* decodeThread(void *arg) {
+    prctl(PR_SET_NAME, "decodeThread");
+    pthread_detach(pthread_self());
+
+    while (mAVFormatContext != NULL) {
+        if(mParamFrame.desHeight == 0 && mParamFrame.desWidth == 0) {
+            pthread_cond_wait(&mCond, &mMutex);
+        }
+
+    }
+}
+
+static void computeParamFrame() {
+    if(mParamFrame.srcHeight == 0 || mParamFrame.srcWidth == 0) {
+        return;
+    }
+
+    if(mParamFrame.winHeight == 0 || mParamFrame.winWidth == 0) {
+        return;
+    }
+
+    float scaleW = mParamFrame.winWidth * 1.0f / mParamFrame.srcWidth;
+    float scaleH = mParamFrame.winHeight * 1.0f / mParamFrame.srcHeight;
+
+    if(scaleW > scaleH) {
+        mParamFrame.desWidth = mParamFrame.winWidth ;
+        mParamFrame.desHeight = mParamFrame.srcHeight / scaleW;
+    } else {
+        mParamFrame.desHeight = mParamFrame.winHeight;
+        mParamFrame.desWidth = mParamFrame.srcWidth / scaleH;
+    }
+
+    mParamFrame.startX = (mParamFrame.desWidth - mParamFrame.winWidth) / 2;
+    mParamFrame.startY = (mParamFrame.desHeight - mParamFrame.winHeight) / 2;
+}
 
 int zc_init() {
 #if FF_API_NEXT
@@ -87,8 +130,26 @@ int zc_set_data(const char* path) {
         return ZMEDIA_FAILURE;
     }
 
+    //init ParamFrame
+    mParamFrame.srcWidth = mAVCodecContext->width;
+    mParamFrame.srcHeight = mAVCodecContext->height;
+    computeParamFrame();
+    ret = pthread_create(&mTid, NULL, decodeThread, NULL);
+    if(ret != 0) {
+        MLOGE("thread create error[%d]", ret);
+        return ZMEDIA_FAILURE;
+    }
+
     return ZMEDIA_SUCCESS;
 }
+
+void zc_set_window_rect(int width, int height){
+    mParamFrame.winWidth = width;
+    mParamFrame.winHeight = height;
+    computeParamFrame();
+    pthread_cond_broadcast(&mCond);
+}
+
 int zc_obtain_frame(AVFrame** frame) {
     if(mCurAVFrame == NULL) {
         return ZMEDIA_FAILURE;

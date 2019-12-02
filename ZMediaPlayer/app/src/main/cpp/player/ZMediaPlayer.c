@@ -19,6 +19,8 @@ static Watermark *p_mark = NULL;
 static float p_speed = 1.0f;
 static PlayStatus p_status = Idle;
 
+static ANativeWindow *mANativeWindow = NULL;
+
 static int drawWatermark(uint8_t *buf) {
 
 }
@@ -47,8 +49,23 @@ int zp_release() {
 }
 int zp_set_window(ANativeWindow *window) {
     if(window == NULL) {
+        if(mANativeWindow != NULL) {
+            ANativeWindow_release(mANativeWindow);
+            mANativeWindow = NULL;
+            return ZMEDIA_SUCCESS;
+        }
+        return ZMEDIA_FAILURE;
     }
-    return ZMEDIA_FAILURE;
+
+    if(mANativeWindow != NULL && mANativeWindow != window) {
+        ANativeWindow_release(mANativeWindow);
+        mANativeWindow = NULL;
+    }
+
+    mANativeWindow = window;
+    zc_set_window_rect(ANativeWindow_getWidth(mANativeWindow),
+            ANativeWindow_getHeight(mANativeWindow));
+
 }
 int zp_set_data_source(const char* path) {
     return zc_set_data(path);
