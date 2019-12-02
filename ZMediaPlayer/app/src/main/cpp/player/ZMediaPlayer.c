@@ -2,6 +2,8 @@
 // Created by ZYM on 2019/11/23.
 //
 #include <ZMediaPlayer.h>
+#include <ZMediaDecode.h>
+#include <ZMediaCommon.h>
 
 typedef enum {
     Idle = 0,
@@ -27,36 +29,38 @@ static void *threadDrawSurface(void *args) {
 
 int zp_init() {
     p_status = Initialized;
-    return ZP_SUCCESS;
+    zc_init();
+    return ZMEDIA_SUCCESS;
 }
 int zp_start() {
-    return ZP_SUCCESS;
+    return ZMEDIA_SUCCESS;
 }
 int zp_pause() {
-    return ZP_SUCCESS;
+    return ZMEDIA_SUCCESS;
 }
 int zp_stop() {
-    return ZP_SUCCESS;
+    return ZMEDIA_SUCCESS;
 }
 int zp_release() {
-    return ZP_SUCCESS;
+    zc_destroy();
+    return ZMEDIA_SUCCESS;
 }
 int zp_set_window(ANativeWindow *window) {
     if(window == NULL) {
     }
-    return ZP_FAILURE;
+    return ZMEDIA_FAILURE;
 }
 int zp_set_data_source(const char* path) {
-    return ZP_FAILURE;
+    return zc_set_data(path);
 }
 int zp_set_looping(int loop) {
-    return ZP_FAILURE;
+    return ZMEDIA_FAILURE;
 }
 int zp_set_playback_speed(float speed) {
     p_speed = speed;
-    return ZP_SUCCESS;
+    return ZMEDIA_FAILURE;
 }
 int zp_set_watermark(Watermark *mark) {
     p_mark = mark;
-    return ZP_SUCCESS;
+    return ZMEDIA_SUCCESS;
 }

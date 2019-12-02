@@ -15,6 +15,18 @@ android {
                 cppFlags ""
             }
         }
+
+        ndk {
+            // Specifies the ABI configurations of your native
+            // libraries Gradle should build and package with your APK.
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+
+        sourceSets {
+            main {
+                jniLibs.srcDirs = ['src/main/cpp/ffmpeg/libs']
+            }
+        }
     }
     buildTypes {
         release {

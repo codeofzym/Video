@@ -12,3 +12,5 @@
 /captures
 .externalNativeBuild
 .cxx
+/src/main/cpp/ffmpeg/include
+/src/main/cpp/ffmpeg/libs

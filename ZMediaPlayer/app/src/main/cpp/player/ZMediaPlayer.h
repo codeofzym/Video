@@ -2,10 +2,9 @@
 // Created by ZYM on 2019/11/23.
 //
 #include <android/native_window.h>
+
 #ifndef ZMEDIAPLAYER_ZMEDIAPLAYER_H
 #define ZMEDIAPLAYER_ZMEDIAPLAYER_H
-#define ZP_SUCCESS 0;
-#define ZP_FAILURE -1;
 
 typedef struct {
     int width;
