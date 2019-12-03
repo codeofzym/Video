@@ -23,15 +23,82 @@ static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
 
+static int readFrame(AVFrame* result) {
+    int ret;
+    AVPacket *packet = av_packet_alloc();
+    av_init_packet(packet);
+    AVFrame *frame = av_frame_alloc();
+    //compute size of buffer
+    if (result->data == NULL) {
+        int bufferSize = av_image_get_buffer_size(AV_PIX_FMT_RGBA, mParamFrame.desWidth,
+                                              mParamFrame.desHeight, 1);
+        uint8_t *rgbBuffer = (uint8_t *) av_malloc(bufferSize * sizeof(uint8_t));
+        av_image_fill_arrays(result->data, result->linesize, rgbBuffer, AV_PIX_FMT_RGBA,
+                mParamFrame.desWidth, mParamFrame.desHeight, 1);
+    }
+    struct SwsContext *swsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
+                                                   mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL, NULL, NULL);
+    //
+    if(av_read_frame(mAVFormatContext, packet) >= 0) {
+        //decode video stream
+        if(packet->stream_index == mVideoIndex) {
+            ret = avcodec_send_packet(mAVCodecContext, packet);
+            if(ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+                MLOGE("send player error[%d]", result);
+                goto fail;
+            }
+
+            ret = avcodec_receive_frame(mAVCodecContext, frame);
+            if(ret < 0 && ret != AVERROR_EOF) {
+                MLOGE("recevie player error[%d]", ret);
+            } else if(ret == AVERROR(EAGAIN)) {
+                MLOGE("recevie data error[%d]", ret);
+            } else {
+                ret = sws_scale(swsContext, (const uint8_t* const*)frame->data, frame->linesize, 0,
+                                   mParamFrame.srcHeight, result->data, result->linesize);
+                MLOGI("height[%d] of scale", ret);
+                av_frame_free(frame);
+                av_packet_free(packet);
+                return ZMEDIA_SUCCESS;
+            }
+        }
+    }
+
+fail:
+    av_frame_free(frame);
+    av_packet_free(packet);
+return ZMEDIA_FAILURE;
+
+}
+
 static void* decodeThread(void *arg) {
     prctl(PR_SET_NAME, "decodeThread");
     pthread_detach(pthread_self());
+
+    if(mCurAVFrame == NULL) {
+        mCurAVFrame = av_frame_alloc();
+    }
+
+    if(mNextAVFrame == NULL) {
+        mNextAVFrame = av_frame_alloc();
+    }
 
     while (mAVFormatContext != NULL) {
         if(mParamFrame.desHeight == 0 && mParamFrame.desWidth == 0) {
             pthread_cond_wait(&mCond, &mMutex);
         }
 
+        pthread_mutex_lock(&mMutex);
+        if(mCurAVFrame->pkt_pos == -1) {
+            readFrame(mCurAVFrame);
+        }
+
+        if(mNextAVFrame->pkt_pos == -1) {
+            readFrame(mNextAVFrame);
+        }
+        pthread_mutex_unlock(&mMutex);
+
+        pthread_cond_wait(&mCond, &mMutex);
     }
 }
 
@@ -157,8 +224,13 @@ int zc_obtain_frame(AVFrame** frame) {
     frame = &mCurAVFrame;
     return ZMEDIA_SUCCESS;
 }
-int zc_free_frame() {
-
+void zc_free_frame() {
+    AVFrame *tmp = NULL;
+    pthread_mutex_lock(&mMutex);
+    tmp = mCurAVFrame;
+    mCurAVFrame = mNextAVFrame;
+    mNextAVFrame = tmp;
+    pthread_mutex_unlock(&mMutex);
 }
 int zc_get_space_time() {
     return 1000 * 1000 / mFrameRate;

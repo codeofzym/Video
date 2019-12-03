@@ -4,6 +4,8 @@
 #include <ZMediaPlayer.h>
 #include <ZMediaDecode.h>
 #include <ZMediaCommon.h>
+#include <sys/prctl.h>
+#include <pthread.h>
 
 typedef enum {
     Idle = 0,
@@ -26,7 +28,10 @@ static int drawWatermark(uint8_t *buf) {
 }
 
 static void *threadDrawSurface(void *args) {
+    prctl(PR_SET_NAME, "threadDrawSurface");
+    pthread_detach(pthread_self());
 
+    
 }
 
 int zp_init() {

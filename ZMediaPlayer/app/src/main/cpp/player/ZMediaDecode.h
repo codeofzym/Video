@@ -21,7 +21,7 @@ int zc_init();
 int zc_set_data(const char* path);
 void zc_set_window_rect(int width, int height);
 int zc_obtain_frame(AVFrame** frame);
-int zc_free_frame();
+void zc_free_frame();
 int zc_get_space_time();
 int zc_destroy();
 
