@@ -9,235 +9,335 @@
 #include <libswscale/swscale.h>
 #include <sys/prctl.h>
 #include <pthread.h>
+#include <unistd.h>
 
 static AVFormatContext* mAVFormatContext = NULL;
 static int mVideoIndex = -1;
 static AVCodecContext* mAVCodecContext = NULL;
-static int mFrameRate = 0;
-static ParamFrame mParamFrame;
+static struct SwsContext *mSwsContext = NULL;
 
-static AVFrame* mCurAVFrame = NULL;
-static AVFrame* mNextAVFrame = NULL;
+static int mFrameRate = 0;
+//init frame of param
+static ParamFrame mParamFrame = {
+        .srcWidth = 0,
+        .srcHeight = 0,
+        .winWidth = 0,
+        .winHeight = 0,
+        .startX = 0,
+        .startY = 0
+};
+
+static FrameData *mCurFrameData = NULL;
+static FrameData *mNextFrameData = NULL;
 
 static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
 
-static int readFrame(AVFrame* result) {
+static int mLooping = 1;
+
+/**
+ * alloc stack to save graphics of frame
+ *
+ * @param frame avframe of FFmpeg
+ * */
+static void allocFrame(AVFrame * frame) {
+    int size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, mParamFrame.srcWidth,
+                                        mParamFrame.srcHeight, 1);
+    MLOGI("size[%d]", size);
+    uint8_t *buffer = (uint8_t *) av_malloc(size * sizeof(uint8_t));
+    av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGBA,
+                         mParamFrame.srcWidth, mParamFrame.srcHeight, 1);
+}
+/**
+ * free stack to release graphics of frame
+ *
+ * @param frame avframe of FFmpeg
+ * */
+static void freeFrame(AVFrame * frame) {
+    if(frame == NULL) {
+        return;
+    }
+    av_free(frame->data);
+}
+
+/**
+ * obtain frame that it decoded from thread of decoding
+ * */
+static void readFrame() {
     int ret;
     AVPacket *packet = av_packet_alloc();
     av_init_packet(packet);
-    AVFrame *frame = av_frame_alloc();
-    //compute size of buffer
-    if (result->data == NULL) {
-        int bufferSize = av_image_get_buffer_size(AV_PIX_FMT_RGBA, mParamFrame.desWidth,
-                                              mParamFrame.desHeight, 1);
-        uint8_t *rgbBuffer = (uint8_t *) av_malloc(bufferSize * sizeof(uint8_t));
-        av_image_fill_arrays(result->data, result->linesize, rgbBuffer, AV_PIX_FMT_RGBA,
-                mParamFrame.desWidth, mParamFrame.desHeight, 1);
-    }
-    struct SwsContext *swsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
-                                                   mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL, NULL, NULL);
-    //
-    if(av_read_frame(mAVFormatContext, packet) >= 0) {
-        //decode video stream
-        if(packet->stream_index == mVideoIndex) {
+    AVFrame *srcFrame = av_frame_alloc();
+
+    while (av_read_frame(mAVFormatContext, packet) >= 0) {
+        FrameData *data = mCurFrameData;
+        AVFrame *desFrame = data->frame;
+        if (packet->stream_index == mVideoIndex) {
             ret = avcodec_send_packet(mAVCodecContext, packet);
-            if(ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
-                MLOGE("send player error[%d]", result);
-                goto fail;
+            if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
+                MLOGE("send player error[%d]", ret);
+                return;
             }
 
-            ret = avcodec_receive_frame(mAVCodecContext, frame);
-            if(ret < 0 && ret != AVERROR_EOF) {
+            ret = avcodec_receive_frame(mAVCodecContext, srcFrame);
+            if (ret == AVERROR(EAGAIN)) {
+                continue;
+            } else if (ret < 0 && ret != AVERROR_EOF) {
                 MLOGE("recevie player error[%d]", ret);
-            } else if(ret == AVERROR(EAGAIN)) {
-                MLOGE("recevie data error[%d]", ret);
-            } else {
-                ret = sws_scale(swsContext, (const uint8_t* const*)frame->data, frame->linesize, 0,
-                                   mParamFrame.srcHeight, result->data, result->linesize);
-                MLOGI("height[%d] of scale", ret);
-                av_frame_free(frame);
-                av_packet_free(packet);
-                return ZMEDIA_SUCCESS;
+                return;
             }
+
+            pthread_mutex_lock(&mMutex);
+            //polling frame to save graphics that drawing surface
+            if(data->state != 0 && mNextFrameData->state == 0) {
+                data = mNextFrameData;
+                desFrame = data->frame;
+            }
+            //frame is already so thread to suspend
+            if(data->state != 0) {
+                pthread_cond_wait(&mCond, &mMutex);
+            }
+
+            ret = sws_scale(mSwsContext, (const uint8_t *const *)srcFrame->data, srcFrame->linesize, 0,
+                            mParamFrame.srcHeight, desFrame->data, desFrame->linesize);
+            if (ret <= 0) {
+                MLOGE("scale Height[%d]", ret);
+                pthread_mutex_unlock(&mMutex);
+                return;
+            }
+            data->state = 1;
+            pthread_mutex_unlock(&mMutex);
+
         }
     }
 
-fail:
-    av_frame_free(frame);
-    av_packet_free(packet);
-return ZMEDIA_FAILURE;
-
+    av_packet_unref(packet);
+    av_frame_free(&srcFrame);
+    av_packet_free(&packet);
 }
 
-static void* decodeThread(void *arg) {
-    prctl(PR_SET_NAME, "decodeThread");
-    pthread_detach(pthread_self());
-
-    if(mCurAVFrame == NULL) {
-        mCurAVFrame = av_frame_alloc();
-    }
-
-    if(mNextAVFrame == NULL) {
-        mNextAVFrame = av_frame_alloc();
-    }
-
-    while (mAVFormatContext != NULL) {
-        if(mParamFrame.desHeight == 0 && mParamFrame.desWidth == 0) {
-            pthread_cond_wait(&mCond, &mMutex);
-        }
-
-        pthread_mutex_lock(&mMutex);
-        if(mCurAVFrame->pkt_pos == -1) {
-            readFrame(mCurAVFrame);
-        }
-
-        if(mNextAVFrame->pkt_pos == -1) {
-            readFrame(mNextAVFrame);
-        }
-        pthread_mutex_unlock(&mMutex);
-
-        pthread_cond_wait(&mCond, &mMutex);
-    }
-}
-
+/**
+ * According to resolution of surface and resolution of file to compute param of scale
+ *
+ * before calling must set @link{ParamFrame.srcWidth} @link{ParamFrame.srcHeight}
+ * and @link{ParamFrame.winWidth} @link{ParamFrame.winHeight}
+ */
 static void computeParamFrame() {
-    if(mParamFrame.srcHeight == 0 || mParamFrame.srcWidth == 0) {
+    if(mParamFrame.srcWidth == 0 || mParamFrame.srcHeight == 0) {
+        MLOGE("computeParams src param Width[%d] Height[%d]", mParamFrame.srcWidth, mParamFrame.srcHeight);
         return;
     }
 
-    if(mParamFrame.winHeight == 0 || mParamFrame.winWidth == 0) {
+    if(mParamFrame.winWidth == 0 || mParamFrame.winHeight == 0) {
+        MLOGE("computeParams win param Width[%d] Height[%d]", mParamFrame.winWidth, mParamFrame.winHeight);
         return;
     }
 
     float scaleW = mParamFrame.winWidth * 1.0f / mParamFrame.srcWidth;
     float scaleH = mParamFrame.winHeight * 1.0f / mParamFrame.srcHeight;
-
+    MLOGI("scaleW[%f] scaleH[%f]", scaleW, scaleH);
     if(scaleW > scaleH) {
-        mParamFrame.desWidth = mParamFrame.winWidth ;
-        mParamFrame.desHeight = mParamFrame.srcHeight / scaleW;
+        mParamFrame.desWidth = mParamFrame.winWidth;
+        mParamFrame.desHeight = (int)(mParamFrame.srcHeight / scaleW);
     } else {
         mParamFrame.desHeight = mParamFrame.winHeight;
         mParamFrame.desWidth = mParamFrame.srcWidth / scaleH;
     }
-
     mParamFrame.startX = (mParamFrame.desWidth - mParamFrame.winWidth) / 2;
     mParamFrame.startY = (mParamFrame.desHeight - mParamFrame.winHeight) / 2;
+    MLOGI("srcWidth[%d] srcHeight[%d] winWidth[%d] winHeight[%d] desWidth[%d] desHeight[%d] startX[%d] startY[%d]",
+          mParamFrame.srcWidth, mParamFrame.srcHeight, mParamFrame.winWidth, mParamFrame.winHeight,
+          mParamFrame.desWidth, mParamFrame.desHeight, mParamFrame.startX,  mParamFrame.startY);
+
+    mSwsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
+                                 mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL,
+                                 NULL, NULL);
+}
+
+/**
+ * thread of decoding
+ * */
+static void* decodeThread(void *arg) {
+    prctl(PR_SET_NAME, "decodeThread");
+    pthread_detach(pthread_self());
+    MLOGI("decodeThread");
+    while (mParamFrame.winWidth == 0 || mParamFrame.winHeight == 0) {
+        MLOGE("mWindow == null");
+        usleep(20 * 1000);
+    }
+
+    computeParamFrame();
+
+    //start of thread to apply for space of stack
+    mCurFrameData = malloc(sizeof(FrameData));
+    mCurFrameData->frame = av_frame_alloc();
+    allocFrame(mCurFrameData->frame);
+    mNextFrameData = malloc(sizeof(FrameData));
+    mNextFrameData->frame = av_frame_alloc();
+    allocFrame(mNextFrameData->frame);
+
+    //obtain frame and draw graphics to surface
+    do{
+        av_seek_frame(mAVFormatContext, -1, 0, SEEK_SET);
+        readFrame();
+    } while (mLooping);
+
+    //end of thread to release space of stack
+    if(mCurFrameData != NULL) {
+        freeFrame(mCurFrameData->frame);
+        av_frame_free(&mCurFrameData->frame);
+        free(mCurFrameData);
+        mCurFrameData = NULL;
+    }
+
+    if(mNextFrameData != NULL) {
+        freeFrame(mNextFrameData->frame);
+        av_frame_free(&mNextFrameData->frame);
+        free(mNextFrameData);
+        mNextFrameData = NULL;
+    }
+
 }
 
 int zc_init() {
 #if FF_API_NEXT
     av_register_all();
 #endif
+    return ZMEDIA_SUCCESS;
 }
 
-int zc_set_data(const char* path) {
+void zc_set_data(const char* path) {
     int ret;
-    //init AVFormatContext need to free
+    MLOGI("set_data paht[%s]", path);
+    //获取解码的上下文
+    mAVFormatContext = avformat_alloc_context();
     if(mAVFormatContext == NULL) {
-        mAVFormatContext = avformat_alloc_context();
+        return;
     }
 
     ret = avformat_open_input(&mAVFormatContext, path, NULL, NULL);
     if(ret != 0) {
-        MLOGE("open error[%d]", ret);
-        return ZMEDIA_FAILURE;
+        MLOGE("open file error[%d]", ret);
+        return;
     }
 
-    MLOGI("stream num[%d]", mAVFormatContext->nb_streams);
-    //find stream of video
+    ret = avformat_find_stream_info(mAVFormatContext, NULL);
+    if(ret < 0) {
+        MLOGE("find stream info error[%d]", ret);
+        return;
+    }
+
     for (int i = 0; i < mAVFormatContext->nb_streams; i++) {
         if(mAVFormatContext->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             mVideoIndex = i;
-            break;
         }
     }
-    //check index of video
     if(mVideoIndex < 0) {
-        MLOGE("file not contain stream of video");
-        return ZMEDIA_FAILURE;
+        MLOGE("can not find video stream error[%d]", mVideoIndex);
+        return;
     }
 
-    //init frame rate
-    AVStream *avStream = mAVFormatContext->streams[mVideoIndex];
-    if(avStream == NULL) {
-        MLOGE("obtain stream error");
-        return ZMEDIA_FAILURE;
-    }
-
-    mFrameRate = avStream->r_frame_rate.num / avStream->r_frame_rate.den;
-    if(mFrameRate < 25) {
-        MLOGE("init frame rate error[%d]", mFrameRate);
-        return ZMEDIA_FAILURE;
-    }
-
-    //init AVCodecContext need to free
     mAVCodecContext = avcodec_alloc_context3(NULL);
     if(mAVCodecContext == NULL) {
-        MLOGE("alloc codec error");
-        return ZMEDIA_FAILURE;
+        MLOGE("code context alloc error");
+        return;
     }
 
     ret = avcodec_parameters_to_context(mAVCodecContext, mAVFormatContext->streams[mVideoIndex]->codecpar);
     if(ret < 0) {
-        MLOGE("parameters error[%d]", ret);
-        return ZMEDIA_FAILURE;
+        MLOGE("parameters code context error[%d]", ret);
+        return;
     }
 
-    AVCodec *codec = avcodec_find_decoder(mAVCodecContext->codec_id);
-    if(codec == NULL) {
-        MLOGE("find codec error");
-        return ZMEDIA_FAILURE;
+    AVStream *avStream = mAVFormatContext->streams[mVideoIndex];
+    if(avStream == NULL) {
+        MLOGE("obtain av stream error");
+        return;
     }
 
-    ret = avcodec_open2(mAVCodecContext, codec, NULL);
+    mFrameRate = avStream->r_frame_rate.num / avStream->r_frame_rate.den;
+    if(mFrameRate <= 0) {
+        MLOGE("obtain frame rate error[%d]", mFrameRate);
+        return;
+    }
+
+    AVCodec *avCodec = avcodec_find_decoder(mAVCodecContext->codec_id);
+    if(avCodec == NULL) {
+        MLOGE("find av code error");
+        return;
+    }
+
+    ret = avcodec_open2(mAVCodecContext, avCodec, NULL);
     if(ret != 0) {
-        MLOGE("codec open error[%d]", ret);
-        return ZMEDIA_FAILURE;
+        MLOGE("open av codec error[%d]", ret);
+        return;
     }
 
     //init ParamFrame
     mParamFrame.srcWidth = mAVCodecContext->width;
     mParamFrame.srcHeight = mAVCodecContext->height;
-    computeParamFrame();
+
     ret = pthread_create(&mTid, NULL, decodeThread, NULL);
     if(ret != 0) {
         MLOGE("thread create error[%d]", ret);
+        return;
+    }
+}
+
+void zc_set_window_rect(int width, int height) {
+    if(width <= 0 || height <= 0) {
+        MLOGE("set window rect is error width[%d]  height[%d]", width, height);
+        return;
+    }
+    mParamFrame.winWidth = width;
+    mParamFrame.winHeight = height;
+    MLOGI("windowW[%d] windowH[%d]", mParamFrame.winWidth, mParamFrame.winHeight);
+}
+
+int zc_get_frame_padding(int *top, int *left) {
+    if(mParamFrame.startX == -1 || mParamFrame.startY == -1) {
         return ZMEDIA_FAILURE;
     }
 
+    top = &mParamFrame.startY;
+    left = &mParamFrame.startX;
     return ZMEDIA_SUCCESS;
 }
 
-void zc_set_window_rect(int width, int height){
-    mParamFrame.winWidth = width;
-    mParamFrame.winHeight = height;
-    computeParamFrame();
+AVFrame* zc_obtain_frame() {
+    MLOGI("zc_obtain_frame");
+    if(mCurFrameData == NULL || mCurFrameData->state == 0) {
+        return NULL;
+    }
+    return mCurFrameData->frame;
+}
+
+void zc_free_frame() {
+    pthread_mutex_lock(&mMutex);
+
+    FrameData *tmp = NULL;
+    tmp = mCurFrameData;
+    mCurFrameData = mNextFrameData;
+    mNextFrameData = tmp;
+    mNextFrameData->state = 0;
+
+    pthread_mutex_unlock(&mMutex);
     pthread_cond_broadcast(&mCond);
 }
 
-int zc_obtain_frame(AVFrame** frame) {
-    if(mCurAVFrame == NULL) {
-        return ZMEDIA_FAILURE;
-    }
-    frame = &mCurAVFrame;
-    return ZMEDIA_SUCCESS;
-}
-void zc_free_frame() {
-    AVFrame *tmp = NULL;
-    pthread_mutex_lock(&mMutex);
-    tmp = mCurAVFrame;
-    mCurAVFrame = mNextAVFrame;
-    mNextAVFrame = tmp;
-    pthread_mutex_unlock(&mMutex);
-}
 int zc_get_space_time() {
+    if(mFrameRate == 0) {
+        MLOGE("space time init error");
+        return 0;
+    }
+
     return 1000 * 1000 / mFrameRate;
 }
+
 int zc_destroy() {
     if(mAVCodecContext != NULL) {
-        avcodec_free_context(mAVCodecContext);
+        avcodec_free_context(&mAVCodecContext);
         mAVCodecContext = NULL;
     }
 
@@ -245,4 +345,10 @@ int zc_destroy() {
         avformat_free_context(mAVFormatContext);
         mAVFormatContext = NULL;
     }
+
+    if(mSwsContext != NULL) {
+        sws_freeContext(mSwsContext);
+        mSwsContext = NULL;
+    }
+    return ZMEDIA_SUCCESS;
 }

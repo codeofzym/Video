@@ -7,6 +7,7 @@
 extern "C" {
 #endif
 #include <ZMediaPlayer.h>
+#include <ZMediaCommon.h>
 
 static void init(JNIEnv *env, jobject thiz) {
     zp_init();
@@ -14,6 +15,7 @@ static void init(JNIEnv *env, jobject thiz) {
 
 static void setDataResource(JNIEnv *env, jobject thiz, jstring path) {
     const char *input = (*env).GetStringUTFChars(path, NULL);
+    MLOGI("path[%s]", input);
     zp_set_data_source(input);
 }
 
