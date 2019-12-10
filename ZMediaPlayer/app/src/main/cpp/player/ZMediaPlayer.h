@@ -19,6 +19,7 @@ int zp_start();
 int zp_pause();
 int zp_stop();
 int zp_release();
+int zp_isPlaying();
 int zp_set_window(ANativeWindow *window);
 int zp_set_data_source(const char* path);
 int zp_set_looping(int loop);

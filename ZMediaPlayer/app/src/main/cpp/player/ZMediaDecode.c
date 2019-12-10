@@ -11,6 +11,11 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#define STATUS_UNINITIALIZED (0);
+#define STATUS_INITIALIZED (1);
+#define STATUS_DECODING (2);
+#define STATUS_COMPLETED (3);
+
 static AVFormatContext* mAVFormatContext = NULL;
 static int mVideoIndex = -1;
 static AVCodecContext* mAVCodecContext = NULL;
@@ -33,8 +38,10 @@ static FrameData *mNextFrameData = NULL;
 static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mStatusMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int mLooping = 1;
+static int mStatus = 0;
 
 /**
  * alloc stack to save graphics of frame
@@ -65,12 +72,14 @@ static void freeFrame(AVFrame * frame) {
  * obtain frame that it decoded from thread of decoding
  * */
 static void readFrame() {
+    MLOGI("readFrame");
     int ret;
     AVPacket *packet = av_packet_alloc();
     av_init_packet(packet);
     AVFrame *srcFrame = av_frame_alloc();
 
-    while (av_read_frame(mAVFormatContext, packet) >= 0) {
+    while (av_read_frame(mAVFormatContext, packet) >= 0
+            && (mStatus == 1 || mStatus == 2)) {
         FrameData *data = mCurFrameData;
         AVFrame *desFrame = data->frame;
         if (packet->stream_index == mVideoIndex) {
@@ -98,6 +107,11 @@ static void readFrame() {
             if(data->state != 0) {
                 pthread_cond_wait(&mCond, &mMutex);
             }
+            if(mStatus == 3 || mStatus == 0) {
+                MLOGI("readFrame break");
+                pthread_mutex_unlock(&mMutex);
+                break;
+            }
 
             ret = sws_scale(mSwsContext, (const uint8_t *const *)srcFrame->data, srcFrame->linesize, 0,
                             mParamFrame.srcHeight, desFrame->data, desFrame->linesize);
@@ -108,6 +122,12 @@ static void readFrame() {
             }
             data->state = 1;
             pthread_mutex_unlock(&mMutex);
+
+            if((mStatus&1) == 1) {
+                pthread_mutex_lock(&mStatusMutex);
+                mStatus = STATUS_DECODING;
+                pthread_mutex_unlock(&mStatusMutex);
+            }
 
         }
     }
@@ -162,6 +182,15 @@ static void* decodeThread(void *arg) {
     prctl(PR_SET_NAME, "decodeThread");
     pthread_detach(pthread_self());
     MLOGI("decodeThread");
+    if(mCurFrameData == NULL) {
+        mCurFrameData = malloc(sizeof(FrameData));
+        mCurFrameData->frame = av_frame_alloc();
+        allocFrame(mCurFrameData->frame);
+        mNextFrameData = malloc(sizeof(FrameData));
+        mNextFrameData->frame = av_frame_alloc();
+        allocFrame(mNextFrameData->frame);
+    }
+
     while (mParamFrame.winWidth == 0 || mParamFrame.winHeight == 0) {
         MLOGE("mWindow == null");
         usleep(20 * 1000);
@@ -169,41 +198,25 @@ static void* decodeThread(void *arg) {
 
     computeParamFrame();
 
-    //start of thread to apply for space of stack
-    mCurFrameData = malloc(sizeof(FrameData));
-    mCurFrameData->frame = av_frame_alloc();
-    allocFrame(mCurFrameData->frame);
-    mNextFrameData = malloc(sizeof(FrameData));
-    mNextFrameData->frame = av_frame_alloc();
-    allocFrame(mNextFrameData->frame);
-
     //obtain frame and draw graphics to surface
     do{
         av_seek_frame(mAVFormatContext, -1, 0, SEEK_SET);
         readFrame();
+        if(mStatus == 3) {
+            break;
+        }
     } while (mLooping);
-
-    //end of thread to release space of stack
-    if(mCurFrameData != NULL) {
-        freeFrame(mCurFrameData->frame);
-        av_frame_free(&mCurFrameData->frame);
-        free(mCurFrameData);
-        mCurFrameData = NULL;
-    }
-
-    if(mNextFrameData != NULL) {
-        freeFrame(mNextFrameData->frame);
-        av_frame_free(&mNextFrameData->frame);
-        free(mNextFrameData);
-        mNextFrameData = NULL;
-    }
-
+    MLOGI("decodeThread  stop");
 }
 
 int zc_init() {
 #if FF_API_NEXT
     av_register_all();
 #endif
+    //apply for space of stack
+    pthread_mutex_lock(&mStatusMutex);
+    mStatus = STATUS_UNINITIALIZED;
+    pthread_mutex_unlock(&mStatusMutex);
     return ZMEDIA_SUCCESS;
 }
 
@@ -277,12 +290,43 @@ void zc_set_data(const char* path) {
     //init ParamFrame
     mParamFrame.srcWidth = mAVCodecContext->width;
     mParamFrame.srcHeight = mAVCodecContext->height;
+    pthread_mutex_lock(&mStatusMutex);
+    mStatus = STATUS_INITIALIZED;
+    pthread_mutex_unlock(&mStatusMutex);
+}
+
+void zc_start_decode() {
+    int ret;
+    MLOGI("decode mStatus[%d]", mStatus);
+    if(mStatus&0x1 != 1) {
+        MLOGE("mStatus error[%d]", mStatus);
+        return;
+    }
+
+    if(mStatus == 3) {
+        pthread_mutex_lock(&mStatusMutex);
+        mStatus = STATUS_INITIALIZED;
+        pthread_mutex_unlock(&mStatusMutex);
+    }
 
     ret = pthread_create(&mTid, NULL, decodeThread, NULL);
     if(ret != 0) {
         MLOGE("thread create error[%d]", ret);
         return;
     }
+}
+
+void zc_stop_decode() {
+    pthread_mutex_lock(&mMutex);
+
+    pthread_mutex_lock(&mStatusMutex);
+    mStatus = STATUS_COMPLETED;
+    pthread_mutex_unlock(&mStatusMutex);
+
+    mCurFrameData->state = 0;
+    mNextFrameData->state = 0;
+    pthread_mutex_unlock(&mMutex);
+    pthread_cond_broadcast(&mCond);
 }
 
 void zc_set_window_rect(int width, int height) {
@@ -306,9 +350,15 @@ int zc_get_frame_padding(int *top, int *left) {
 }
 
 AVFrame* zc_obtain_frame() {
-    MLOGI("zc_obtain_frame");
-    if(mCurFrameData == NULL || mCurFrameData->state == 0) {
+    MLOGI("zc_obtain_frame mStatus[%d]", mStatus);
+    if(mCurFrameData == NULL || mStatus != 2) {
         return NULL;
+    }
+
+    if(mCurFrameData->state == 0 && mNextFrameData->state == 0) {
+        pthread_mutex_lock(&mStatusMutex);
+        mStatus = STATUS_COMPLETED;
+        pthread_mutex_unlock(&mStatusMutex);
     }
     return mCurFrameData->frame;
 }
@@ -335,7 +385,30 @@ int zc_get_space_time() {
     return 1000 * 1000 / mFrameRate;
 }
 
+int zc_is_completed() {
+    return mStatus;
+}
+
 int zc_destroy() {
+    pthread_mutex_lock(&mStatusMutex);
+    mStatus = STATUS_UNINITIALIZED;
+    pthread_mutex_unlock(&mStatusMutex);
+
+    //release space of stack
+    if(mCurFrameData != NULL) {
+        freeFrame(mCurFrameData->frame);
+        av_frame_free(&mCurFrameData->frame);
+        free(mCurFrameData);
+        mCurFrameData = NULL;
+    }
+
+    if(mNextFrameData != NULL) {
+        freeFrame(mNextFrameData->frame);
+        av_frame_free(&mNextFrameData->frame);
+        free(mNextFrameData);
+        mNextFrameData = NULL;
+    }
+
     if(mAVCodecContext != NULL) {
         avcodec_free_context(&mAVCodecContext);
         mAVCodecContext = NULL;

@@ -1,6 +1,7 @@
 package com.zym.mediaplayer;
 
 import android.graphics.Bitmap;
+import android.util.Log;
 import android.view.Surface;
 
 /**
@@ -58,7 +59,15 @@ public class ZMediaPlayer {
      * relase source of video
      * */
     public void relase() {
-        _relase();
+        _release();
+    }
+
+    /**
+     * obtain playstate
+     * @return  true:Playing false:other
+     * */
+    public boolean isPlaying() {
+        return _isPlaying() == 3;
     }
 
     /**
@@ -99,7 +108,8 @@ public class ZMediaPlayer {
     private native void _start();
     private native void _pause();
     private native void _stop();
-    private native void _relase();
+    private native void _release();
+    private native int _isPlaying();
     private native void _setLooping(int loop);
     private native void _setPlaybackSpeed(float speed);
     private native void _setWatermark(Bitmap bitmap, int left, int top);

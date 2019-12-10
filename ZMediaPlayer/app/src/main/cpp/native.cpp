@@ -45,6 +45,10 @@ static void release(JNIEnv *env, jobject thiz) {
     zp_release();
 }
 
+static jint isPlaying(JNIEnv *env, jobject thiz) {
+    return zp_isPlaying();
+}
+
 static void setLooping(JNIEnv *env, jobject thiz, jint looping) {
     zp_set_looping(looping);
 }
@@ -70,7 +74,8 @@ static JNINativeMethod sMethod[] = {
         {"_start", "()V",(void *)start},
         {"_pause", "()V",(void *)pause},
         {"_stop", "()V",(void *)stop},
-        {"_relase", "()V",(void *)release},
+        {"_release", "()V",(void *)release},
+        {"_isPlaying", "()I",(void *)isPlaying},
         {"_setLooping", "(I)V",(void *)setLooping},
         {"_setPlaybackSpeed", "(F)V",(void *)setPlaybackSpeed},
         {"_setWatermark", "(Landroid/graphics/Bitmap;II)V",(void *)setWatermark},

@@ -20,8 +20,8 @@ typedef enum {
     Error
 } PlayStatus;
 
-static Watermark *p_mark = NULL;
-static float p_speed = 1.0f;
+static Watermark *mMark = NULL;
+static float mSpeed = 1.0f;
 static PlayStatus mStatus = Idle;
 static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
@@ -46,22 +46,28 @@ static void *threadDrawSurface(void *args) {
                                      ANativeWindow_getHeight(mANativeWindow), WINDOW_FORMAT_RGBA_8888);
     int wHeight = ANativeWindow_getHeight(mANativeWindow);
     while (mStatus == Playing) {
-        MLOGI("zc_obtain_frame start");
         if(mANativeWindow == NULL) {
             MLOGE("Window is not set, so wait it 20ms");
             usleep(20*1000);
             continue;
         }
 
-//        if(frame == NULL) {
-            frame = zc_obtain_frame();
-//        }
-
+        frame = zc_obtain_frame();
         if(frame == NULL || frame->data[0] == NULL) {
             usleep(20*1000);
             MLOGI("frame is error, wait it 20ms");
             continue;
         }
+        if(zc_is_completed() == 3) {
+            MLOGI("Completed");
+            mStatus = Completed;
+            break;
+        }
+
+        int top = 0;
+        int left = 0;
+        zc_get_frame_padding(&top, &left);
+        left *= 4;
 
         ret = ANativeWindow_lock(mANativeWindow, &windowBuffer, NULL);
         if(ret != 0) {
@@ -72,12 +78,12 @@ static void *threadDrawSurface(void *args) {
 
         for (int h = 0; h < wHeight; h++) {
                 memcpy(des + (h) * windowBuffer.stride * 4,
-                       src + h * frame->linesize[0],
-                       frame->linesize[0]);
+                       src + left+ (h + top) * frame->linesize[0],
+                       frame->linesize[0] - left);
         }
         ANativeWindow_unlockAndPost(mANativeWindow);
         zc_free_frame();
-        usleep(zc_get_space_time());
+        usleep((int)(zc_get_space_time() / mSpeed));
     }
 
 }
@@ -89,6 +95,11 @@ int zp_init() {
 }
 
 int zp_start() {
+    MLOGI("start mStatus[%d]", mStatus);
+    if(mStatus != Paused) {
+        zc_start_decode();
+    }
+
     mStatus = Playing;
     int ret = pthread_create(&mTid, NULL, threadDrawSurface, NULL);
     if(ret != 0) {
@@ -99,16 +110,24 @@ int zp_start() {
 }
 
 int zp_pause() {
+    mStatus = Paused;
+    usleep(20* 1000);
     return ZMEDIA_SUCCESS;
 }
 
 int zp_stop() {
+    mStatus = Stopped;
+    zc_stop_decode();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_release() {
     zc_destroy();
     return ZMEDIA_SUCCESS;
+}
+
+int zp_isPlaying() {
+    return mStatus;
 }
 
 int zp_set_window(ANativeWindow *window) {
@@ -142,10 +161,11 @@ int zp_set_looping(int loop) {
     return ZMEDIA_FAILURE;
 }
 int zp_set_playback_speed(float speed) {
-    p_speed = speed;
+    mSpeed = speed;
+    MLOGI("mSpeed[%f]", mSpeed);
     return ZMEDIA_FAILURE;
 }
 int zp_set_watermark(Watermark *mark) {
-    p_mark = mark;
+    mMark = mark;
     return ZMEDIA_SUCCESS;
 }
