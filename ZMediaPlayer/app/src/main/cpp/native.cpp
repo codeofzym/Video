@@ -1,13 +1,14 @@
 #include <jni.h>
 #include <string>
 #include <android/native_window_jni.h>
-#include <android/bitmap.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <ZMediaPlayer.h>
 #include <ZMediaCommon.h>
+#include <android/bitmap.h>
+#include <libavutil/imgutils.h>
 
 static void init(JNIEnv *env, jobject thiz) {
     zp_init();
@@ -58,7 +59,35 @@ static void setPlaybackSpeed(JNIEnv *env, jobject thiz, jfloat speed) {
 }
 
 static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, jint top) {
-    zp_set_watermark(NULL);
+    MLOGI("setWatermark");
+    if(bitmap == NULL || left < 0 || top < 0) {
+        MLOGE("param is error bitmap[%p] left[%d] top[%d]", bitmap, left, top);
+        return;
+    }
+    int ret;
+
+    AndroidBitmapInfo info;
+    ret = AndroidBitmap_getInfo(env, bitmap, &info);
+    MLOGI("bitmap info ret[%d] format[%d] stride[%d]", ret, info.format, info.stride);
+    if(ret == 0) {
+        Watermark *watermark = (Watermark *)malloc(sizeof(Watermark));
+        watermark->height = info.height;
+        watermark->width = info.width;
+        watermark->stride = info.stride;
+        watermark->left = left;
+        watermark->top = top;
+        int size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, info.width, info.height, 1);
+        MLOGI("bitmap buffer size[%d]", size);
+        watermark->data = (uint8_t *)malloc(sizeof(uint8_t) * size);
+        void *pixs;
+        int ret = AndroidBitmap_lockPixels(env, bitmap, &pixs);
+        MLOGI("lock pix ret[%d]", ret);
+        if(ret == 0) {
+            memcpy(watermark->data, (uint8_t *)pixs, size);
+            AndroidBitmap_unlockPixels(env, bitmap);
+            zp_set_watermark(watermark);
+        }
+    }
 }
 
 #ifdef __cplusplus

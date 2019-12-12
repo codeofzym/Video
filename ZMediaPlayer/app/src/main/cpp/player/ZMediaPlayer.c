@@ -29,8 +29,17 @@ static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static ANativeWindow *mANativeWindow = NULL;
 
-static int drawWatermark(uint8_t *buf) {
-    return 0;
+static int drawWatermark(uint8_t *buf, int stride) {
+    if(mMark == NULL) {
+        return ZMEDIA_FAILURE;
+    }
+
+    for (int h = 0; h < mMark->height * mMark->stride; h += 4) {
+        if(mMark->data[h + 3] != 0) {
+            memcpy(buf + (h / mMark->stride) * stride * 4 + (h % mMark->stride), mMark->data + h, 4);
+        }
+    }
+    return ZMEDIA_SUCCESS;
 }
 
 static void *threadDrawSurface(void *args) {
@@ -81,11 +90,12 @@ static void *threadDrawSurface(void *args) {
                        src + left+ (h + top) * frame->linesize[0],
                        frame->linesize[0] - left);
         }
+        drawWatermark(des, windowBuffer.stride);
         ANativeWindow_unlockAndPost(mANativeWindow);
         zc_free_frame();
         usleep((int)(zc_get_space_time() / mSpeed));
     }
-
+    MLOGI("threadDrawSurface end");
 }
 
 int zp_init() {
@@ -122,6 +132,8 @@ int zp_stop() {
 }
 
 int zp_release() {
+    mStatus = Idle;
+    zc_stop_decode();
     zc_destroy();
     return ZMEDIA_SUCCESS;
 }

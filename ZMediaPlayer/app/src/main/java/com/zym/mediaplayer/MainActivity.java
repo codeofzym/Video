@@ -2,6 +2,8 @@ package com.zym.mediaplayer;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -27,7 +29,10 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void surfaceCreated(SurfaceHolder holder) {
                 mZMediaPlayer.setSurface(holder.getSurface());
-                mZMediaPlayer.setDataResource(Environment.getExternalStorageDirectory().getAbsolutePath() + "/video_test.mp4");
+                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
+                Log.i("ZMediaPlayer", "path:" + path) ;
+                mZMediaPlayer.setDataResource(path);
+//                mZMediaPlayer.setDataResource(Environment.getExternalStorageDirectory().getAbsolutePath() + "/video_test.mp4");
                 mZMediaPlayer.start();
             }
 
@@ -53,13 +58,21 @@ public class MainActivity extends AppCompatActivity {
 //                    mSpeed = 1.0f;
 //                }
 //                mZMediaPlayer.setPlaybackSpeed(mSpeed);
-                boolean play = mZMediaPlayer.isPlaying();
-                Log.i("ZMediaPlayer", "isPlaying:" + play) ;
-                if(!play) {
-                    mZMediaPlayer.start();
-                } else {
-                    mZMediaPlayer.stop();
-                }
+//                boolean play = mZMediaPlayer.isPlaying();
+//                Log.i("ZMediaPlayer", "isPlaying:" + play) ;
+//                if(!play) {
+//                    mZMediaPlayer.start();
+//                } else {
+//                    mZMediaPlayer.stop();
+//                }
+//                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/1111.jpg";
+//                Bitmap bitmap = BitmapFactory.decodeFile(path);
+//                mZMediaPlayer.setWatermark(bitmap, 0, 0);
+                mZMediaPlayer.relase();
+                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
+                Log.i("ZMediaPlayer", "path:" + path) ;
+//                mZMediaPlayer.setDataResource(path);
+//                mZMediaPlayer.start();
             }
         });
     }

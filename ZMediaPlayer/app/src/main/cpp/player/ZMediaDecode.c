@@ -62,7 +62,7 @@ static void allocFrame(AVFrame * frame) {
  * @param frame avframe of FFmpeg
  * */
 static void freeFrame(AVFrame * frame) {
-    if(frame == NULL) {
+    if(frame == NULL || frame->data == NULL) {
         return;
     }
     av_free(frame->data);
@@ -170,9 +170,11 @@ static void computeParamFrame() {
           mParamFrame.srcWidth, mParamFrame.srcHeight, mParamFrame.winWidth, mParamFrame.winHeight,
           mParamFrame.desWidth, mParamFrame.desHeight, mParamFrame.startX,  mParamFrame.startY);
 
-    mSwsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
+    if(mSwsContext == NULL) {
+        mSwsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
                                  mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL,
                                  NULL, NULL);
+    }
 }
 
 /**
@@ -222,9 +224,11 @@ int zc_init() {
 
 void zc_set_data(const char* path) {
     int ret;
-    MLOGI("set_data paht[%s]", path);
+    MLOGI("set_data path[%s]", path);
     //获取解码的上下文
-    mAVFormatContext = avformat_alloc_context();
+    if(mAVFormatContext == NULL) {
+        mAVFormatContext = avformat_alloc_context();
+    }
     if(mAVFormatContext == NULL) {
         return;
     }
@@ -251,7 +255,9 @@ void zc_set_data(const char* path) {
         return;
     }
 
-    mAVCodecContext = avcodec_alloc_context3(NULL);
+    if(mAVCodecContext == NULL) {
+        mAVCodecContext = avcodec_alloc_context3(NULL);
+    }
     if(mAVCodecContext == NULL) {
         MLOGE("code context alloc error");
         return;
@@ -350,7 +356,7 @@ int zc_get_frame_padding(int *top, int *left) {
 }
 
 AVFrame* zc_obtain_frame() {
-    MLOGI("zc_obtain_frame mStatus[%d]", mStatus);
+//    MLOGI("zc_obtain_frame mStatus[%d]", mStatus);
     if(mCurFrameData == NULL || mStatus != 2) {
         return NULL;
     }
@@ -409,19 +415,21 @@ int zc_destroy() {
         mNextFrameData = NULL;
     }
 
+    if(mSwsContext != NULL) {
+        sws_freeContext(mSwsContext);
+        mSwsContext = NULL;
+    }
+
     if(mAVCodecContext != NULL) {
         avcodec_free_context(&mAVCodecContext);
         mAVCodecContext = NULL;
     }
 
     if(mAVFormatContext != NULL) {
-        avformat_free_context(mAVFormatContext);
+        avformat_free_context(&mAVFormatContext);
         mAVFormatContext = NULL;
     }
 
-    if(mSwsContext != NULL) {
-        sws_freeContext(mSwsContext);
-        mSwsContext = NULL;
-    }
+    MLOGI("destroy success");
     return ZMEDIA_SUCCESS;
 }

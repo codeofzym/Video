@@ -9,6 +9,7 @@
 typedef struct {
     int width;
     int height;
+    int stride;
     int left;
     int top;
     uint8_t *data;
