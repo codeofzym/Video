@@ -15,6 +15,7 @@ typedef enum {
     Prepared,
     Playing,
     Paused,
+    Stopping,
     Stopped,
     Completed = 6,
     Error
@@ -62,15 +63,17 @@ static void *threadDrawSurface(void *args) {
         }
 
         frame = zc_obtain_frame();
+
+        if(zc_is_completed()) {
+            MLOGI("Completed");
+            mStatus = Completed;
+            break;
+        }
+
         if(frame == NULL || frame->data[0] == NULL) {
             usleep(20*1000);
             MLOGI("frame is error, wait it 20ms");
             continue;
-        }
-        if(zc_is_completed() == 3) {
-            MLOGI("Completed");
-            mStatus = Completed;
-            break;
         }
 
         int top = 0;
@@ -95,6 +98,7 @@ static void *threadDrawSurface(void *args) {
         zc_free_frame();
         usleep((int)(zc_get_space_time() / mSpeed));
     }
+    mStatus = Stopped;
     MLOGI("threadDrawSurface end");
 }
 
@@ -126,14 +130,18 @@ int zp_pause() {
 }
 
 int zp_stop() {
-    mStatus = Stopped;
+    mStatus = Stopping;
     zc_stop_decode();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_release() {
-    mStatus = Idle;
+    mStatus = Stopping;
     zc_stop_decode();
+    while (mStatus != Stopped) {
+        usleep(10 * 1000);
+    }
+    mStatus = Idle;
     zc_destroy();
     return ZMEDIA_SUCCESS;
 }

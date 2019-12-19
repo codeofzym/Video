@@ -71,8 +71,8 @@ public class MainActivity extends AppCompatActivity {
                 mZMediaPlayer.relase();
                 String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
                 Log.i("ZMediaPlayer", "path:" + path) ;
-//                mZMediaPlayer.setDataResource(path);
-//                mZMediaPlayer.start();
+                mZMediaPlayer.setDataResource(path);
+                mZMediaPlayer.start();
             }
         });
     }
