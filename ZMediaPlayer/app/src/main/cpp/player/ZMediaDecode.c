@@ -20,6 +20,11 @@ typedef enum {
     DecodeCompleted,
 } DECODE_E;
 
+typedef struct {
+    int length;
+    int *frames;
+} BREAK_POINT_S;
+
 static AVFormatContext* mAVFormatContext = NULL;
 static int mVideoIndex = -1;
 static AVCodecContext* mAVCodecContext = NULL;
@@ -46,6 +51,9 @@ static pthread_mutex_t mStatusMutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int mLooping = 0;
 static DECODE_E mStatus = DecodeUninitialized;
+static BREAK_POINT_S* mBreakPoints = NULL;
+static int mCurrentFrameIndex = 0;
+
 
 /**
  * alloc stack to save graphics of frame
@@ -72,10 +80,35 @@ static void freeFrame(AVFrame * frame) {
     av_free(frame->data);
 }
 
+static int isBreakFrame(int pos) {
+    if(mBreakPoints == NULL) {
+        return 0;
+    }
+
+    for (int i = 0; i < mBreakPoints->length; i++) {
+        MLOGI("isBreakFrame pos[%d] frames[%d]", pos, mBreakPoints->frames[i]);
+        int b = mBreakPoints->frames[i];
+        if(b == pos) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static void setDecodeStatus(DECODE_E status) {
     pthread_mutex_lock(&mStatusMutex);
     mStatus = status;
     pthread_mutex_unlock(&mStatusMutex);
+}
+
+static int allowToSwitchStatus(DECODE_E status) {
+    if(status == DecodeStoping) {
+        if(mStatus == DecodeCompleted || mStatus == DecodeStoping || mStatus == DecodeStoped) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /**
@@ -87,7 +120,7 @@ static void readFrame() {
     AVPacket *packet = av_packet_alloc();
 //    av_init_packet(packet);
     AVFrame *srcFrame = av_frame_alloc();
-
+    mCurrentFrameIndex = 0;
     while (av_read_frame(mAVFormatContext, packet) >= 0
             && (mStatus == DecodeInitialized || mStatus == Decoding)) {
         FrameData *data = mCurFrameData;
@@ -118,6 +151,7 @@ static void readFrame() {
             if(data->state != 0 && (mStatus == DecodeInitialized || mStatus == Decoding)) {
                 pthread_cond_wait(&mCond, &mMutex);
             }
+
             if(mStatus != DecodeInitialized && mStatus != Decoding) {
                 MLOGI("readFrame break");
                 pthread_mutex_unlock(&mMutex);
@@ -132,10 +166,14 @@ static void readFrame() {
                 break;
             }
             data->state = 1;
+            mCurrentFrameIndex ++;
             pthread_mutex_unlock(&mMutex);
 
             if(mStatus == DecodeInitialized) {
                 setDecodeStatus(Decoding);
+            }
+            if(isBreakFrame(mCurrentFrameIndex) == 1) {
+                setDecodeStatus(DecodeCompleted);
             }
 
         }
@@ -329,6 +367,10 @@ void zc_start_decode() {
 }
 
 void zc_stop_decode() {
+    MLOGI("zc_stop_decode mStatus[%d]", mStatus);
+    if(mStatus == DecodeStoped) {
+        return;
+    }
     pthread_mutex_lock(&mMutex);
 
     setDecodeStatus(DecodeStoping);
@@ -437,4 +479,13 @@ int zc_destroy() {
 
     MLOGI("destroy success");
     return ZMEDIA_SUCCESS;
+}
+
+void zc_set_break_frame(int length, int *frames) {
+    if(mBreakPoints == NULL) {
+        mBreakPoints = (BREAK_POINT_S *)malloc(sizeof(BREAK_POINT_S));
+    }
+    MLOGI("zc_set_break_frame length[%d]", length);
+    mBreakPoints->length = length;
+    mBreakPoints->frames = frames;
 }

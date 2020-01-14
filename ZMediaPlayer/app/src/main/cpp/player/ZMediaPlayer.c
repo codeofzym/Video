@@ -17,7 +17,7 @@ typedef enum {
     Paused,
     Stopping,
     Stopped,
-    Completed = 6,
+    Completed,
     Error
 } PlayStatus;
 
@@ -136,7 +136,11 @@ int zp_stop() {
 }
 
 int zp_release() {
-    mStatus = Stopping;
+    MLOGI("zp_release mStatus[%d]", mStatus);
+    if(mStatus != Stopped) {
+        mStatus = Stopping;
+    }
+
     zc_stop_decode();
     while (mStatus != Stopped) {
         usleep(10 * 1000);

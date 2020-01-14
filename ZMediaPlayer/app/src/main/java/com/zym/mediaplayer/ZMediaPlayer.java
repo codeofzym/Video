@@ -58,7 +58,7 @@ public class ZMediaPlayer {
     /**
      * relase source of video
      * */
-    public void relase() {
+    public void release() {
         _release();
     }
 
@@ -99,6 +99,17 @@ public class ZMediaPlayer {
     }
 
     /**
+     * set index of frame to pause
+     *
+     * @param frames the end index of to show in playback
+     * */
+    public void setBreakPointFrameIndex(int[] frames) {
+        if(frames == null || frames.length < 1) {
+            return;
+        }
+        _setBreakPointFrameIndex(frames);
+    }
+    /**
      * A native method that is implemented by the 'native' native library,
      * which is packaged with this application.
      */
@@ -113,4 +124,5 @@ public class ZMediaPlayer {
     private native void _setLooping(int loop);
     private native void _setPlaybackSpeed(float speed);
     private native void _setWatermark(Bitmap bitmap, int left, int top);
+    private native void _setBreakPointFrameIndex(int[] frames);
 }

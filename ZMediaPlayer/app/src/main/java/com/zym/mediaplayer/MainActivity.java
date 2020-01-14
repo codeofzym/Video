@@ -34,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
                 mZMediaPlayer.setDataResource(path);
 //                mZMediaPlayer.setDataResource(Environment.getExternalStorageDirectory().getAbsolutePath() + "/video_test.mp4");
                 mZMediaPlayer.start();
+                mZMediaPlayer.setBreakPointFrameIndex(new int[]{20});
             }
 
             @Override
@@ -68,10 +69,10 @@ public class MainActivity extends AppCompatActivity {
 //                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/1111.jpg";
 //                Bitmap bitmap = BitmapFactory.decodeFile(path);
 //                mZMediaPlayer.setWatermark(bitmap, 0, 0);
-                mZMediaPlayer.relase();
-                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
-                Log.i("ZMediaPlayer", "path:" + path) ;
-                mZMediaPlayer.setDataResource(path);
+//                mZMediaPlayer.release();
+//                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
+//                Log.i("ZMediaPlayer", "path:" + path) ;
+//                mZMediaPlayer.setDataResource(path);
                 mZMediaPlayer.start();
             }
         });

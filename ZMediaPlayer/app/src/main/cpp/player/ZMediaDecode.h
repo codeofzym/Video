@@ -15,6 +15,7 @@ int zc_get_frame_padding(int *top, int *left);
 AVFrame* zc_obtain_frame();
 void zc_free_frame();
 int zc_get_space_time();
+void zc_set_break_frame(int length, int *frames);
 /**
  * @return 0:uninitialized 1: initialized 2:decoding 3:completed
  * */
