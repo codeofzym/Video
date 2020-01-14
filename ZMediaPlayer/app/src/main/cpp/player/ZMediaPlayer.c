@@ -37,7 +37,7 @@ static int drawWatermark(uint8_t *buf, int stride) {
 
     for (int h = 0; h < mMark->height * mMark->stride; h += 4) {
         if(mMark->data[h + 3] != 0) {
-            memcpy(buf + (h / mMark->stride) * stride * 4 + (h % mMark->stride), mMark->data + h, 4);
+            memcpy(buf + ((h / mMark->stride) + mMark->top) * stride * 4 + (h % mMark->stride), mMark->data + h, 4);
         }
     }
     return ZMEDIA_SUCCESS;
@@ -47,7 +47,7 @@ static void *threadDrawSurface(void *args) {
     prctl(PR_SET_NAME, "threadDrawSurface");
     pthread_detach(pthread_self());
 
-//    MLOGI("threadDrawSurface start");
+    MLOGI("threadDrawSurface start");
     int ret;
     ANativeWindow_Buffer windowBuffer;
 
@@ -110,16 +110,15 @@ int zp_init() {
 
 int zp_start() {
     MLOGI("start mStatus[%d]", mStatus);
-    if(mStatus != Paused) {
-        zc_start_decode();
+    if(mStatus == Stopped || mStatus == Initialized) {
+        mStatus = Playing;
+        int ret = pthread_create(&mTid, NULL, threadDrawSurface, NULL);
+        if(ret != 0) {
+            MLOGE("create thread error[%d]", ret);
+            return ZMEDIA_FAILURE;
+        }
     }
-
-    mStatus = Playing;
-    int ret = pthread_create(&mTid, NULL, threadDrawSurface, NULL);
-    if(ret != 0) {
-        MLOGE("create thread error[%d]", ret);
-        return ZMEDIA_FAILURE;
-    }
+    zc_start_decode();
     return ZMEDIA_SUCCESS;
 }
 

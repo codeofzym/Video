@@ -357,7 +357,7 @@ void zc_start_decode() {
         return;
     }
 
-    setDecodeStatus(DecodeInitialized);
+    setDecodeStatus(Decoding);
 
     ret = pthread_create(&mTid, NULL, decodeThread, NULL);
     if(ret != 0) {
