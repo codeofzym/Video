@@ -110,12 +110,16 @@ int zp_start() {
 }
 
 int zp_pause() {
+    if(mDrawRun == 0) {
+        return ZMEDIA_FAILURE;
+    }
     mDrawRun = 0;
     usleep(20* 1000);
     return ZMEDIA_SUCCESS;
 }
 
 int zp_stop() {
+
     mDrawRun = 0;
     zc_stop_decode();
     return ZMEDIA_SUCCESS;
