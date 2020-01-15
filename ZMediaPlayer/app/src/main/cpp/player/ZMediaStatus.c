@@ -61,7 +61,7 @@ int switchToMediaStatus(Z_MEDIA_STATUS_S *status, Z_MEDIA_STATUS_E desStatus) {
         }
     } else if(desStatus == ZM_Playing) {
         if(status->zStatus == ZM_Completed || status->zStatus == ZM_Prepared
-                || status->zStatus == ZM_Stopped) {
+                || status->zStatus == ZM_Stopped || status->zStatus == ZM_Paused) {
             setMediaStatus(status, desStatus);
             return ZM_SUCCESS;
         }

@@ -91,15 +91,15 @@ static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, j
     }
 }
 
-static void setBreakPointFrameIndex(JNIEnv *env, jobject thiz, jintArray frames) {
-    int *arr = env->GetIntArrayElements(frames, NULL);
-    int lenth = env->GetArrayLength(frames);
-    int *result = (int *)malloc(lenth * sizeof(int));
-    for (int i = 0; i < lenth; ++i) {
+static void setBreakPointFrameIndex(JNIEnv *env, jobject thiz, jlongArray frames) {
+    long *arr = env->GetLongArrayElements(frames, NULL);
+    int length = env->GetArrayLength(frames);
+    long *result = (long *)malloc(length * sizeof(long));
+    for (int i = 0; i < length; ++i) {
         result[i] = arr[i];
     }
-    env->ReleaseIntArrayElements(frames, arr, 0);
-    zc_set_break_frame(lenth, result);
+    env->ReleaseLongArrayElements(frames, arr, 0);
+    zc_set_break_frame(length, result);
 }
 
 #ifdef __cplusplus
@@ -120,7 +120,7 @@ static JNINativeMethod sMethod[] = {
         {"_setLooping", "(I)V",(void *)setLooping},
         {"_setPlaybackSpeed", "(F)V",(void *)setPlaybackSpeed},
         {"_setWatermark", "(Landroid/graphics/Bitmap;II)V",(void *)setWatermark},
-        {"_setBreakPointFrameIndex", "([I)V",(void *)setBreakPointFrameIndex},
+        {"_setBreakPointFrameIndex", "([J)V",(void *)setBreakPointFrameIndex},
 };
 
 static int registerNativesMethods(JNIEnv* env, const char* className, JNINativeMethod* method,

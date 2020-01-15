@@ -34,7 +34,7 @@ public class MainActivity extends AppCompatActivity {
                 mZMediaPlayer.setDataResource(path);
 //                mZMediaPlayer.setDataResource(Environment.getExternalStorageDirectory().getAbsolutePath() + "/video_test.mp4");
                 mZMediaPlayer.start();
-                mZMediaPlayer.setBreakPointFrameIndex(new int[]{20});
+                mZMediaPlayer.setBreakPointFrameIndex(new long[]{45000});
             }
 
             @Override
@@ -71,7 +71,7 @@ public class MainActivity extends AppCompatActivity {
 //                mZMediaPlayer.setWatermark(bitmap, 0, 0);
 //                mZMediaPlayer.release();
 //                String path = MainActivity.this.getExternalFilesDir("video").getAbsolutePath() + "/video_test.mp4";
-//                Log.i("ZMediaPlayer", "path:" + path) ;
+////                Log.i("ZMediaPlayer", "path:" + path) ;
 //                mZMediaPlayer.setDataResource(path);
                 mZMediaPlayer.start();
             }

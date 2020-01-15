@@ -52,8 +52,8 @@ static void *threadDrawSurface(void *args) {
 
         frame = zc_obtain_frame();
 
-        if(zc_is_completed()) {
-            MLOGI("Completed");
+        if(zc_is_completed() == 1) {
+            MLOGI("player Completed");
             mDrawRun = 0;
             break;
         }

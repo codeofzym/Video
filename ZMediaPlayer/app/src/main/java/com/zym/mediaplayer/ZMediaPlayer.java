@@ -103,7 +103,7 @@ public class ZMediaPlayer {
      *
      * @param frames the end index of to show in playback
      * */
-    public void setBreakPointFrameIndex(int[] frames) {
+    public void setBreakPointFrameIndex(long[] frames) {
         if(frames == null || frames.length < 1) {
             return;
         }
@@ -124,5 +124,5 @@ public class ZMediaPlayer {
     private native void _setLooping(int loop);
     private native void _setPlaybackSpeed(float speed);
     private native void _setWatermark(Bitmap bitmap, int left, int top);
-    private native void _setBreakPointFrameIndex(int[] frames);
+    private native void _setBreakPointFrameIndex(long[] frames);
 }

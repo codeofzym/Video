@@ -14,7 +14,8 @@
 
 typedef struct {
     int length;
-    int *frames;
+    int index;
+    long *frames;
 } BREAK_POINT_S;
 
 static AVFormatContext* mAVFormatContext = NULL;
@@ -44,7 +45,6 @@ static pthread_mutex_t mStatusMutex = PTHREAD_MUTEX_INITIALIZER;
 static int mLooping = 0;
 static Z_MEDIA_STATUS_S *mStatus = NULL;
 static BREAK_POINT_S* mBreakPoints = NULL;
-static int mCurrentFrameIndex = 0;
 
 
 /**
@@ -97,7 +97,9 @@ static void readFrame() {
     AVPacket *packet = av_packet_alloc();
 //    av_init_packet(packet);
     AVFrame *srcFrame = av_frame_alloc();
-    mCurrentFrameIndex = 0;
+    if(mBreakPoints != NULL) {
+        mBreakPoints->index = 0;
+    }
     while (av_read_frame(mAVFormatContext, packet) >= 0) {
         FrameData *data = mCurFrameData;
         if(data->state != 0) {
@@ -138,6 +140,15 @@ static void readFrame() {
                 pthread_cond_wait(&mCond, &mMutex);
             }
 
+            MLOGI("srcFrame->pts[%d]", srcFrame->pts);
+            if(mBreakPoints != NULL && srcFrame->pts == mBreakPoints->frames[mBreakPoints->index]) {
+                switchToMediaStatus(mStatus, ZM_Paused);
+                mBreakPoints->index ++;
+                if(mBreakPoints->index >= mBreakPoints->length) {
+                    mBreakPoints->index = 0;
+                }
+            }
+
             while (mStatus->zStatus == ZM_Paused) {
                 MLOGI("wait status[%d]", mStatus->zStatus);
                 pthread_cond_wait(&mCond, &mMutex);
@@ -152,7 +163,6 @@ static void readFrame() {
             }
             data->state = 1;
 //            MLOGI("read frame success");
-            mCurrentFrameIndex ++;
             pthread_mutex_unlock(&mMutex);
         }
     }
@@ -344,7 +354,9 @@ void zc_start_decode() {
             return;
         }
     } else if(mStatus->zStatus == ZM_Paused) {
-
+        if(switchToMediaStatus(mStatus, ZM_Playing) == 1) {
+            pthread_cond_broadcast(&mCond);
+        }
     } else {
         MLOGE("decode start error mStatus[%d]", mStatus->zStatus);
     }
@@ -423,7 +435,9 @@ int zc_get_space_time() {
 }
 
 int zc_is_completed() {
-    if(mStatus->zStatus == ZM_Completed) {
+    if(mStatus->zStatus == ZM_Paused) {
+        return 1;
+    } else if(mStatus->zStatus == ZM_Completed) {
         return 1;
     } else if(mStatus->zStatus == ZM_Stopped || mStatus->zStatus == ZM_Stopping) {
         if(mCurFrameData->state == 0 && mNextFrameData->state == 0) {
@@ -474,7 +488,7 @@ int zc_destroy() {
     return ZMEDIA_SUCCESS;
 }
 
-void zc_set_break_frame(int length, int *frames) {
+void zc_set_break_frame(int length, long *frames) {
     if(mBreakPoints == NULL) {
         mBreakPoints = (BREAK_POINT_S *)malloc(sizeof(BREAK_POINT_S));
     }
