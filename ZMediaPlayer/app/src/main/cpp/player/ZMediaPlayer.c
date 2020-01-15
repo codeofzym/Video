@@ -9,21 +9,9 @@
 #include <unistd.h>
 #include <sched.h>
 
-typedef enum {
-    Idle = 0,
-    Initialized,
-    Prepared,
-    Playing,
-    Paused,
-    Stopping,
-    Stopped,
-    Completed,
-    Error
-} PlayStatus;
-
 static Watermark *mMark = NULL;
 static float mSpeed = 1.0f;
-static PlayStatus mStatus = Idle;
+static int mDrawRun = 0;
 static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -55,7 +43,7 @@ static void *threadDrawSurface(void *args) {
     ANativeWindow_setBuffersGeometry(mANativeWindow, ANativeWindow_getWidth(mANativeWindow),
                                      ANativeWindow_getHeight(mANativeWindow), WINDOW_FORMAT_RGBA_8888);
     int wHeight = ANativeWindow_getHeight(mANativeWindow);
-    while (mStatus == Playing) {
+    while (mDrawRun) {
         if(mANativeWindow == NULL) {
             MLOGE("Window is not set, so wait it 20ms");
             usleep(20*1000);
@@ -66,7 +54,7 @@ static void *threadDrawSurface(void *args) {
 
         if(zc_is_completed()) {
             MLOGI("Completed");
-            mStatus = Completed;
+            mDrawRun = 0;
             break;
         }
 
@@ -96,61 +84,54 @@ static void *threadDrawSurface(void *args) {
         drawWatermark(des, windowBuffer.stride);
         ANativeWindow_unlockAndPost(mANativeWindow);
         zc_free_frame();
+        MLOGI("draw success");
         usleep((int)(zc_get_space_time() / mSpeed));
     }
-    mStatus = Stopped;
     MLOGI("threadDrawSurface end");
 }
 
 int zp_init() {
-    mStatus = Initialized;
     zc_init();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_start() {
-    MLOGI("start mStatus[%d]", mStatus);
-    if(mStatus == Stopped || mStatus == Initialized) {
-        mStatus = Playing;
+    MLOGI("start mStatus[%d]", mDrawRun);
+    zc_start_decode();
+    if(!mDrawRun) {
+        mDrawRun = !mDrawRun;
         int ret = pthread_create(&mTid, NULL, threadDrawSurface, NULL);
         if(ret != 0) {
             MLOGE("create thread error[%d]", ret);
             return ZMEDIA_FAILURE;
         }
     }
-    zc_start_decode();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_pause() {
-    mStatus = Paused;
+    mDrawRun = 0;
     usleep(20* 1000);
     return ZMEDIA_SUCCESS;
 }
 
 int zp_stop() {
-    mStatus = Stopping;
+    mDrawRun = 0;
     zc_stop_decode();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_release() {
-    MLOGI("zp_release mStatus[%d]", mStatus);
-    if(mStatus != Stopped) {
-        mStatus = Stopping;
-    }
+    MLOGI("zp_release mStatus[%d]", mDrawRun);
+    mDrawRun = 0;
 
     zc_stop_decode();
-    while (mStatus != Stopped) {
-        usleep(10 * 1000);
-    }
-    mStatus = Idle;
     zc_destroy();
     return ZMEDIA_SUCCESS;
 }
 
 int zp_isPlaying() {
-    return mStatus;
+    return mDrawRun;
 }
 
 int zp_set_window(ANativeWindow *window) {

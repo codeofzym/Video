@@ -67,7 +67,7 @@ public class ZMediaPlayer {
      * @return  true:Playing false:other
      * */
     public boolean isPlaying() {
-        return _isPlaying() == 3;
+        return _isPlaying() == 1;
     }
 
     /**
