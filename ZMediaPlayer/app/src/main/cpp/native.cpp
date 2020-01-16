@@ -63,6 +63,7 @@ static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, j
     MLOGI("setWatermark");
     if(bitmap == NULL || left < 0 || top < 0) {
         MLOGE("param is error bitmap[%p] left[%d] top[%d]", bitmap, left, top);
+        zp_set_watermark(NULL);
         return;
     }
     int ret;
@@ -92,7 +93,7 @@ static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, j
 }
 
 static void setBreakPointFrameIndex(JNIEnv *env, jobject thiz, jlongArray frames) {
-    long *arr = env->GetLongArrayElements(frames, NULL);
+    jlong *arr = env->GetLongArrayElements(frames, NULL);
     int length = env->GetArrayLength(frames);
     long *result = (long *)malloc(length * sizeof(long));
     for (int i = 0; i < length; ++i) {

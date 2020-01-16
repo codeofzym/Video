@@ -25,7 +25,8 @@ static int drawWatermark(uint8_t *buf, int stride) {
 
     for (int h = 0; h < mMark->height * mMark->stride; h += 4) {
         if(mMark->data[h + 3] != 0) {
-            memcpy(buf + ((h / mMark->stride) + mMark->top) * stride * 4 + (h % mMark->stride), mMark->data + h, 4);
+            memcpy(buf + ((h / mMark->stride) + mMark->top) * stride * 4 + mMark->left * 4
+                + (h % mMark->stride), mMark->data + h, 4);
         }
     }
     return ZMEDIA_SUCCESS;
@@ -84,7 +85,7 @@ static void *threadDrawSurface(void *args) {
         drawWatermark(des, windowBuffer.stride);
         ANativeWindow_unlockAndPost(mANativeWindow);
         zc_free_frame();
-        MLOGI("draw success");
+//        MLOGI("draw success");
         usleep((int)(zc_get_space_time() / mSpeed));
     }
     MLOGI("threadDrawSurface end");
@@ -174,6 +175,17 @@ int zp_set_playback_speed(float speed) {
     return ZMEDIA_FAILURE;
 }
 int zp_set_watermark(Watermark *mark) {
-    mMark = mark;
+    if(mark == NULL) {
+        if(mMark != NULL) {
+            if(mMark->data != NULL) {
+                free(mMark->data);
+                mMark->data = NULL;
+            }
+            free(mMark);
+            mMark = NULL;
+        }
+    } else {
+        mMark = mark;
+    }
     return ZMEDIA_SUCCESS;
 }

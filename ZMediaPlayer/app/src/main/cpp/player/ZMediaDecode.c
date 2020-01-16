@@ -140,7 +140,7 @@ static void readFrame() {
                 pthread_cond_wait(&mCond, &mMutex);
             }
 
-            MLOGI("srcFrame->pts[%d]", srcFrame->pts);
+//            MLOGI("srcFrame->pts[%d]", srcFrame->pts);
             if(mBreakPoints != NULL && srcFrame->pts == mBreakPoints->frames[mBreakPoints->index]) {
                 switchToMediaStatus(mStatus, ZM_Paused);
                 mBreakPoints->index ++;
@@ -380,11 +380,13 @@ void zc_set_window_rect(int width, int height) {
         MLOGE("set window rect is error width[%d]  height[%d]", width, height);
         return;
     }
+    if(mParamFrame.winWidth == 0) {
+        if(switchToMediaStatus(mStatus, ZM_Initialized) != 1) {
+            switchToMediaStatus(mStatus, ZM_Prepared);
+        }
+    }
     mParamFrame.winWidth = width;
     mParamFrame.winHeight = height;
-    if(switchToMediaStatus(mStatus, ZM_Initialized) != 1) {
-        switchToMediaStatus(mStatus, ZM_Prepared);
-    }
     MLOGI("windowW[%d] windowH[%d]", mParamFrame.winWidth, mParamFrame.winHeight);
 }
 
