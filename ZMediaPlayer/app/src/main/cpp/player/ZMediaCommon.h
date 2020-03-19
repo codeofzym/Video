@@ -11,8 +11,8 @@
 #define MLOGI( ... ) __android_log_print(ANDROID_LOG_INFO, TAG_LOG, __VA_ARGS__)
 #define MLOGE( ... ) __android_log_print(ANDROID_LOG_ERROR, TAG_LOG, __VA_ARGS__)
 
-#define ZMEDIA_SUCCESS 0;
-#define ZMEDIA_FAILURE -1;
+#define ZMEDIA_SUCCESS (0)
+#define ZMEDIA_FAILURE (-1)
 
 typedef struct {
     int srcWidth;

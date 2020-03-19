@@ -11,12 +11,17 @@ import android.view.Surface;
  * playback Video without audio
  * */
 public class ZMediaPlayer {
+    private static final String TAG = "ZMediaPlayer";
     // Used to load the 'native-lib' library on application startup.
     static {
         System.loadLibrary("native");
     }
 
+    private final long mID;
+
     public ZMediaPlayer() {
+        mID = System.currentTimeMillis();
+        Log.i(TAG, "ID:" + mID);
         _init();
     }
 

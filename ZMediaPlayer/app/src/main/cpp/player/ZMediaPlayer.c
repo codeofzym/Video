@@ -39,17 +39,9 @@ static void *threadDrawSurface(void *args) {
     MLOGI("threadDrawSurface start");
     int ret;
     ANativeWindow_Buffer windowBuffer;
-
     AVFrame *frame = NULL;
-    ANativeWindow_setBuffersGeometry(mANativeWindow, ANativeWindow_getWidth(mANativeWindow),
-                                     ANativeWindow_getHeight(mANativeWindow), WINDOW_FORMAT_RGBA_8888);
-    int wHeight = ANativeWindow_getHeight(mANativeWindow);
+
     while (mDrawRun) {
-        if(mANativeWindow == NULL) {
-            MLOGE("Window is not set, so wait it 20ms");
-            usleep(20*1000);
-            continue;
-        }
 
         frame = zc_obtain_frame();
 
@@ -70,17 +62,27 @@ static void *threadDrawSurface(void *args) {
         zc_get_frame_padding(&top, &left);
         left *= 4;
 
+        while (mANativeWindow == NULL) {
+            MLOGE("Window is not set, so wait it 20ms");
+            usleep(20*1000);
+        }
+        int wHeight = ANativeWindow_getHeight(mANativeWindow);
         ret = ANativeWindow_lock(mANativeWindow, &windowBuffer, NULL);
         if(ret != 0) {
             break;
         }
         uint8_t *des = windowBuffer.bits;
         uint8_t *src = frame->data[0];
+        if(src == NULL || des == NULL)
+        {
+            MLOGE("[%s:%d] src = null or des = null", __func__, __LINE__);
+            continue;
+        }
 
         for (int h = 0; h < wHeight; h++) {
                 memcpy(des + (h) * windowBuffer.stride * 4,
-                       src + left+ (h + top) * frame->linesize[0],
-                       frame->linesize[0] - left);
+                       src + left + (h + top) * frame->linesize[0],
+                       frame->linesize[0]);
         }
         drawWatermark(des, windowBuffer.stride);
         ANativeWindow_unlockAndPost(mANativeWindow);
@@ -130,7 +132,7 @@ int zp_release() {
     MLOGI("zp_release mStatus[%d]", mDrawRun);
     mDrawRun = 0;
 
-    zc_stop_decode();
+//    zc_stop_decode();
     zc_destroy();
     return ZMEDIA_SUCCESS;
 }
@@ -140,8 +142,10 @@ int zp_isPlaying() {
 }
 
 int zp_set_window(ANativeWindow *window) {
-    MLOGI("set window");
+    MLOGI("ZMediaPlayer [%s:%d]  set window", __func__, __LINE__);
     if(window == NULL) {
+        MLOGE("ZMediaPlayer [%s:%d]  set window is NULL", __func__, __LINE__);
+        zc_set_window_rect(0, 0);
         if(mANativeWindow != NULL) {
             ANativeWindow_release(mANativeWindow);
             mANativeWindow = NULL;
@@ -156,6 +160,9 @@ int zp_set_window(ANativeWindow *window) {
     }
 
     mANativeWindow = window;
+    ANativeWindow_setBuffersGeometry(mANativeWindow, ANativeWindow_getWidth(mANativeWindow),
+                                     ANativeWindow_getHeight(mANativeWindow), WINDOW_FORMAT_RGBA_8888);
+
     zc_set_window_rect(ANativeWindow_getWidth(mANativeWindow),
             ANativeWindow_getHeight(mANativeWindow));
     return ZMEDIA_SUCCESS;

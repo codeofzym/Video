@@ -18,13 +18,14 @@ extern "C" {
 
 typedef enum {
     ZM_Idle = 0,
-    ZM_Initialized,
-    ZM_Prepared,
-    ZM_Playing,
-    ZM_Paused,
-    ZM_Stopping,
-    ZM_Stopped,
-    ZM_Completed,
+    ZM_Initialized = 1,
+    ZM_Prepared = 2,
+    ZM_Playing = 3,
+    ZM_Paused = 4,
+    ZM_Stopping = 5,
+    ZM_Stopped = 6,
+    ZM_Completed = 7,
+    ZM_Release,
     ZM_Error
 } Z_MEDIA_STATUS_E;
 

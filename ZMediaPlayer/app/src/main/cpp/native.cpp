@@ -12,6 +12,7 @@ extern "C" {
 #include <ZMediaDecode.h>
 
 static void init(JNIEnv *env, jobject thiz) {
+    MLOGI("[%s:%d] addr:%x", __func__, __LINE__, &thiz);
     zp_init();
 }
 
@@ -23,6 +24,7 @@ static void setDataResource(JNIEnv *env, jobject thiz, jstring path) {
 
 
 static void setSurface(JNIEnv *env, jobject thiz, jobject surface) {
+    MLOGI("[%s:%d] addr:%x", __func__, __LINE__, &thiz);
     if(surface == NULL) {
         zp_set_window(NULL);
     } else {
@@ -32,6 +34,7 @@ static void setSurface(JNIEnv *env, jobject thiz, jobject surface) {
 }
 
 static void start(JNIEnv *env, jobject thiz) {
+    MLOGI("[%s:%d] addr:%x", __func__, __LINE__, &thiz);
     zp_start();
 }
 
@@ -93,14 +96,14 @@ static void setWatermark(JNIEnv *env, jobject thiz, jobject bitmap, jint left, j
 }
 
 static void setBreakPointFrameIndex(JNIEnv *env, jobject thiz, jlongArray frames) {
-    jlong *arr = env->GetLongArrayElements(frames, NULL);
+/*    jlong *arr = env->GetLongArrayElements(frames, NULL);
     int length = env->GetArrayLength(frames);
     long *result = (long *)malloc(length * sizeof(long));
     for (int i = 0; i < length; ++i) {
         result[i] = arr[i];
     }
     env->ReleaseLongArrayElements(frames, arr, 0);
-    zc_set_break_frame(length, result);
+    zc_set_break_frame(length, result);*/
 }
 
 #ifdef __cplusplus

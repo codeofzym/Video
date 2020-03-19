@@ -28,6 +28,7 @@ Z_MEDIA_STATUS_S * initMediaStatus() {
     status->zStatus = ZM_Idle;
     pthread_mutex_init(status->zMutex, NULL);
     pthread_cond_init(status->zCond, NULL);
+    status->zStatus = ZM_Idle;
     return status;
 }
 
@@ -36,6 +37,7 @@ int setMediaStatus(Z_MEDIA_STATUS_S *status, Z_MEDIA_STATUS_E desStatus) {
         return ZM_SUCCESS;
     }
     status->zStatus = desStatus;
+    MLOGI("setMediaStatus [%d]", status->zStatus);
     return ZM_SUCCESS;
 }
 
@@ -45,7 +47,8 @@ int switchToMediaStatus(Z_MEDIA_STATUS_S *status, Z_MEDIA_STATUS_E desStatus) {
     }
     if(desStatus == ZM_Idle) {
         waitToSwitch(status);
-        if(status->zStatus == ZM_Completed || status->zStatus == ZM_Stopped) {
+        if(status->zStatus == ZM_Completed || status->zStatus == ZM_Stopped
+                || status->zStatus == ZM_Release) {
             setMediaStatus(status, desStatus);
             return ZM_SUCCESS;
         }
@@ -71,7 +74,7 @@ int switchToMediaStatus(Z_MEDIA_STATUS_S *status, Z_MEDIA_STATUS_E desStatus) {
             return ZM_SUCCESS;
         }
     } else if(desStatus == ZM_Completed) {
-        if(status->zStatus == ZM_Playing) {
+        if(status->zStatus == ZM_Playing || status->zStatus == ZM_Stopped) {
             setMediaStatus(status, desStatus);
             return ZM_SUCCESS;
         }
@@ -81,7 +84,7 @@ int switchToMediaStatus(Z_MEDIA_STATUS_S *status, Z_MEDIA_STATUS_E desStatus) {
             return ZM_SUCCESS;
         }
     } else if(desStatus == ZM_Stopped) {
-        if(status->zStatus == ZM_Stopping) {
+        if(status->zStatus == ZM_Stopping || status->zStatus == ZM_Playing) {
             setMediaStatus(status, desStatus);
             return ZM_SUCCESS;
         }

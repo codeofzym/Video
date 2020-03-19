@@ -3,6 +3,7 @@
 //
 #include <ZMediaDecode.h>
 #include <ZMediaCommon.h>
+#include <ThreadNumberLock.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
@@ -39,9 +40,12 @@ static FrameData *mNextFrameData = NULL;
 
 static pthread_t mTid;
 static pthread_cond_t mCond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t mStopCond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t mStatusMutex = PTHREAD_MUTEX_INITIALIZER;
+static THREAD_NUMBER_LOCK_S *mNumLock = NULL;
 
+static char mPath[128] = {0};
 static int mLooping = 0;
 static Z_MEDIA_STATUS_S *mStatus = NULL;
 static BREAK_POINT_S* mBreakPoints = NULL;
@@ -52,24 +56,38 @@ static BREAK_POINT_S* mBreakPoints = NULL;
  *
  * @param frame avframe of FFmpeg
  * */
-static void allocFrame(AVFrame * frame) {
+static FrameData* allocFrameData() {
+    FrameData *data = (FrameData *) malloc(sizeof(FrameData));
+    data->frame = av_frame_alloc();
     int size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, mParamFrame.srcWidth,
                                         mParamFrame.srcHeight, 1);
     MLOGI("size[%d]", size);
     uint8_t *buffer = (uint8_t *) av_malloc(size * sizeof(uint8_t));
-    av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGBA,
+    av_image_fill_arrays(data->frame->data, data->frame->linesize, buffer, AV_PIX_FMT_RGBA,
                          mParamFrame.srcWidth, mParamFrame.srcHeight, 1);
+    return data;
 }
 /**
  * free stack to release graphics of frame
  *
  * @param frame avframe of FFmpeg
  * */
-static void freeFrame(AVFrame * frame) {
-    if(frame == NULL || frame->data == NULL) {
+static void freeFrame(FrameData* data) {
+    if(data == NULL)
+    {
         return;
     }
-    av_free(frame->data);
+
+    if(data->frame == NULL || data->frame->data == NULL)
+    {
+        free(data);
+        return;
+    }
+
+    av_free(data->frame->data);
+    av_frame_free(&(data->frame));
+    data->frame = NULL;
+    free(data);
 }
 
 static int isBreakFrame(int pos) {
@@ -95,54 +113,69 @@ static void readFrame() {
     MLOGI("readFrame start [%d]", mStatus->zStatus);
     int ret;
     AVPacket *packet = av_packet_alloc();
-//    av_init_packet(packet);
     AVFrame *srcFrame = av_frame_alloc();
     if(mBreakPoints != NULL) {
         mBreakPoints->index = 0;
     }
-    while (av_read_frame(mAVFormatContext, packet) >= 0) {
+
+    switchToMediaStatus(mStatus, ZM_Playing);
+    while (mAVFormatContext != NULL && av_read_frame(mAVFormatContext, packet) >= 0) {
+//        MLOGI("[%s:%d]", __func__, __LINE__);
+        pthread_mutex_lock(&mMutex);
+
+        while (mCurFrameData == NULL || mNextFrameData == NULL)
+        {
+            pthread_mutex_unlock(&mMutex);
+            usleep(20);
+            continue;
+        }
+
         FrameData *data = mCurFrameData;
         if(data->state != 0) {
             data = mNextFrameData;
         }
         AVFrame *desFrame = data->frame;
-
-        if (packet->stream_index == mVideoIndex) {
-
+//        MLOGI("[%s:%d]", __func__, __LINE__);
+        if (mAVCodecContext != NULL && packet->stream_index == mVideoIndex) {
             ret = avcodec_send_packet(mAVCodecContext, packet);
             if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
                 MLOGE("send player error[%d]", ret);
+                pthread_mutex_unlock(&mMutex);
                 break;
             }
+//            MLOGI("[%s:%d]", __func__, __LINE__);
 
             ret = avcodec_receive_frame(mAVCodecContext, srcFrame);
             if (ret == AVERROR(EAGAIN)) {
+                pthread_mutex_unlock(&mMutex);
                 continue;
             } else if (ret < 0 && ret != AVERROR_EOF) {
                 MLOGE("recevie player error[%d]", ret);
+                pthread_mutex_unlock(&mMutex);
                 break;
             }
-
-            pthread_mutex_lock(&mMutex);
+//            MLOGI("[%s:%d]", __func__, __LINE__);
             //polling frame to save graphics that drawing surface
             if(data->state != 0 && mNextFrameData->state == 0) {
                 data = mNextFrameData;
                 desFrame = data->frame;
             }
+//            MLOGI("[%s:%d]", __func__, __LINE__);
             if(mStatus->zStatus != ZM_Playing && mStatus->zStatus != ZM_Paused) {
                 MLOGE("thread break by status[%d]", mStatus->zStatus);
                 pthread_mutex_unlock(&mMutex);
                 break;
             }
+//            MLOGI("[%s:%d]", __func__, __LINE__);
             //frame is already so thread to suspend
             if(data->state != 0) {
-                MLOGI("wait use frame");
+//                MLOGI("wait use frame");
                 pthread_cond_wait(&mCond, &mMutex);
             }
-
+//            MLOGI("[%s:%d]", __func__, __LINE__);
 //            MLOGI("srcFrame->pts[%d]", srcFrame->pts);
             if(mBreakPoints != NULL && srcFrame->pts == mBreakPoints->frames[mBreakPoints->index]) {
-                switchToMediaStatus(mStatus, ZM_Paused);
+//                switchToMediaStatus(mStatus, ZM_Paused);
                 mBreakPoints->index ++;
                 if(mBreakPoints->index >= mBreakPoints->length) {
                     mBreakPoints->index = 0;
@@ -153,25 +186,26 @@ static void readFrame() {
                 MLOGI("wait status[%d]", mStatus->zStatus);
                 pthread_cond_wait(&mCond, &mMutex);
             }
-
+            if(mSwsContext == NULL) {
+                pthread_mutex_unlock(&mMutex);
+                continue;
+            }
             ret = sws_scale(mSwsContext, (const uint8_t *const *)srcFrame->data, srcFrame->linesize, 0,
                             mParamFrame.srcHeight, desFrame->data, desFrame->linesize);
+
             if (ret <= 0) {
                 MLOGE("scale Height[%d]", ret);
                 pthread_mutex_unlock(&mMutex);
                 break;
             }
             data->state = 1;
-//            MLOGI("read frame success");
             pthread_mutex_unlock(&mMutex);
         }
     }
 
     av_frame_free(&srcFrame);
-    if(packet != NULL) {
-        av_packet_free(&packet);
-    }
-    MLOGI("readFrame end [%d]", mStatus);
+    av_packet_free(&packet);
+    MLOGI("readFrame end [%d]", mStatus->zStatus);
 }
 
 /**
@@ -180,15 +214,15 @@ static void readFrame() {
  * before calling must set @link{ParamFrame.srcWidth} @link{ParamFrame.srcHeight}
  * and @link{ParamFrame.winWidth} @link{ParamFrame.winHeight}
  */
-static void computeParamFrame() {
+static int computeParamFrame() {
     if(mParamFrame.srcWidth == 0 || mParamFrame.srcHeight == 0) {
         MLOGE("computeParams src param Width[%d] Height[%d]", mParamFrame.srcWidth, mParamFrame.srcHeight);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     if(mParamFrame.winWidth == 0 || mParamFrame.winHeight == 0) {
         MLOGE("computeParams win param Width[%d] Height[%d]", mParamFrame.winWidth, mParamFrame.winHeight);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     float scaleW = mParamFrame.winWidth * 1.0f / mParamFrame.srcWidth;
@@ -196,81 +230,63 @@ static void computeParamFrame() {
     MLOGI("scaleW[%f] scaleH[%f]", scaleW, scaleH);
     if(scaleW > scaleH) {
         mParamFrame.desWidth = mParamFrame.winWidth;
-        mParamFrame.desHeight = (int)(mParamFrame.srcHeight / scaleW);
+        mParamFrame.desHeight = (int)(mParamFrame.srcHeight * scaleW);
     } else {
         mParamFrame.desHeight = mParamFrame.winHeight;
-        mParamFrame.desWidth = mParamFrame.srcWidth / scaleH;
+        mParamFrame.desWidth = mParamFrame.srcWidth * scaleH;
     }
     mParamFrame.startX = (mParamFrame.desWidth - mParamFrame.winWidth) / 2;
     mParamFrame.startY = (mParamFrame.desHeight - mParamFrame.winHeight) / 2;
     MLOGI("srcWidth[%d] srcHeight[%d] winWidth[%d] winHeight[%d] desWidth[%d] desHeight[%d] startX[%d] startY[%d]",
           mParamFrame.srcWidth, mParamFrame.srcHeight, mParamFrame.winWidth, mParamFrame.winHeight,
           mParamFrame.desWidth, mParamFrame.desHeight, mParamFrame.startX,  mParamFrame.startY);
-
-    if(mSwsContext == NULL) {
-        mSwsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight, mAVCodecContext->pix_fmt,
-                                 mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA, SWS_BICUBIC, NULL,
-                                 NULL, NULL);
+    if(mSwsContext != NULL)
+    {
+        sws_freeContext(mSwsContext);
+        mSwsContext = NULL;
     }
-}
+    mSwsContext = sws_getContext(mParamFrame.srcWidth, mParamFrame.srcHeight,
+                                 mAVCodecContext->pix_fmt, mParamFrame.desWidth, mParamFrame.desHeight, AV_PIX_FMT_RGBA,
+                                 SWS_BICUBIC, NULL, NULL, NULL);
+    MLOGI("[%s:%d]mSwsContext success", __func__, __LINE__);
+    freeFrame(mCurFrameData);
+    mCurFrameData = NULL;
+    mCurFrameData = allocFrameData();
+    freeFrame(mNextFrameData);
+    mNextFrameData = NULL;
+    mNextFrameData = allocFrameData();
 
-/**
- * thread of decoding
- * */
-static void* decodeThread(void *arg) {
-    prctl(PR_SET_NAME, "decodeThread");
-    pthread_detach(pthread_self());
-    MLOGI("decodeThread");
-
-    while (mParamFrame.winWidth == 0 || mParamFrame.winHeight == 0) {
-        MLOGE("mWindow == null");
-        usleep(20 * 1000);
-    }
-
-    computeParamFrame();
-
-    //obtain frame and draw graphics to surface
-    do{
-        av_seek_frame(mAVFormatContext, -1, 0, SEEK_SET);
-        readFrame();
-        if(mStatus->zStatus != ZM_Playing) {
-            break;
-        }
-    } while (mLooping);
-    setMediaStatus(mStatus, ZM_Stopped);
-    MLOGI("decodeThread  stop");
-}
-
-int zc_init() {
-#if FF_API_NEXT
-    av_register_all();
-#endif
-    //apply for space of stack
-    mStatus = initMediaStatus();
+    MLOGI("computeParamFrame success");
     return ZMEDIA_SUCCESS;
 }
 
-void zc_set_data(const char* path) {
-    int ret;
-    MLOGI("set_data path[%s]", path);
-    //获取解码的上下文
-    if(mAVFormatContext == NULL) {
-        mAVFormatContext = avformat_alloc_context();
-    }
-    if(mAVFormatContext == NULL) {
-        return;
+static int createFFmpeg()
+{
+    int ret = 0;
+
+    if(strlen(mPath) < 1)
+    {
+        MLOGE("mPath is error");
+        return ZMEDIA_FAILURE;
     }
 
-    ret = avformat_open_input(&mAVFormatContext, path, NULL, NULL);
+    mAVFormatContext = avformat_alloc_context();
+    if(mAVFormatContext == NULL)
+    {
+        MLOGE("mAVFormatContext is error");
+        return ZMEDIA_FAILURE;
+    }
+
+    ret = avformat_open_input(&mAVFormatContext, mPath, NULL, NULL);
     if(ret != 0) {
         MLOGE("open file error[%d]", ret);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     ret = avformat_find_stream_info(mAVFormatContext, NULL);
     if(ret < 0) {
         MLOGE("find stream info error[%d]", ret);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     for (int i = 0; i < mAVFormatContext->nb_streams; i++) {
@@ -280,83 +296,173 @@ void zc_set_data(const char* path) {
     }
     if(mVideoIndex < 0) {
         MLOGE("can not find video stream error[%d]", mVideoIndex);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
-    if(mAVCodecContext == NULL) {
-        mAVCodecContext = avcodec_alloc_context3(NULL);
-    }
+    mAVCodecContext = avcodec_alloc_context3(NULL);
     if(mAVCodecContext == NULL) {
         MLOGE("code context alloc error");
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     ret = avcodec_parameters_to_context(mAVCodecContext, mAVFormatContext->streams[mVideoIndex]->codecpar);
     if(ret < 0) {
         MLOGE("parameters code context error[%d]", ret);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     AVStream *avStream = mAVFormatContext->streams[mVideoIndex];
     if(avStream == NULL) {
         MLOGE("obtain av stream error");
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     mFrameRate = avStream->r_frame_rate.num / avStream->r_frame_rate.den;
     if(mFrameRate <= 0) {
         MLOGE("obtain frame rate error[%d]", mFrameRate);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     AVCodec *avCodec = avcodec_find_decoder(mAVCodecContext->codec_id);
     if(avCodec == NULL) {
         MLOGE("find av code error");
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     ret = avcodec_open2(mAVCodecContext, avCodec, NULL);
     if(ret != 0) {
         MLOGE("open av codec error[%d]", ret);
-        return;
+        return ZMEDIA_FAILURE;
     }
 
     //init ParamFrame
     mParamFrame.srcWidth = mAVCodecContext->width;
     mParamFrame.srcHeight = mAVCodecContext->height;
+    return ZMEDIA_SUCCESS;
+}
+
+static int destroyFFmpeg()
+{
+    if(mAVCodecContext != NULL) {
+        avcodec_close(mAVCodecContext);
+        avcodec_free_context(&mAVCodecContext);
+        mAVCodecContext = NULL;
+    }
+
+    if(mAVFormatContext != NULL) {
+        avformat_close_input(&mAVFormatContext);
+        avformat_free_context(mAVFormatContext);
+        mAVFormatContext = NULL;
+    }
+    return ZMEDIA_SUCCESS;
+}
+/**
+ * thread of decoding
+ * */
+static void *decodeThread(void *arg) {
+    prctl(PR_SET_NAME, "decodeThread");
+    pthread_detach(pthread_self());
+    MLOGI("decodeThread");
+
+    pthread_mutex_lock(&mMutex);
+    if (createFFmpeg() == ZMEDIA_FAILURE)
+    {
+        MLOGE("wait ffmpeg inited");
+        pthread_mutex_unlock(&mMutex);
+        setMediaStatus(mStatus, ZM_Idle);
+        tnl_destroy_thread(mNumLock);
+        return NULL;
+    }
+
+    if (computeParamFrame() == ZMEDIA_FAILURE)
+    {
+        MLOGI("wait ffmpeg inited");
+        pthread_mutex_unlock(&mMutex);
+        setMediaStatus(mStatus, ZM_Idle);
+        tnl_destroy_thread(mNumLock);
+        return NULL;
+    }
+
+    pthread_mutex_unlock(&mMutex);
+
     if(mStatus == NULL) {
         MLOGE("mStatus not init");
-        return;
+        tnl_destroy_thread(mNumLock);
+        return NULL;
     }
-    if(switchToMediaStatus(mStatus, ZM_Initialized) != 1) {
-        switchToMediaStatus(mStatus, ZM_Prepared);
-    } else if(mParamFrame.winWidth > 0) {
-        switchToMediaStatus(mStatus, ZM_Prepared);
+    switchToMediaStatus(mStatus, ZM_Prepared);
+
+    //obtain frame and draw graphics to surface
+    do{
+        if(mAVFormatContext == NULL)
+        {
+            MLOGE("Decode Func[%s]%d mAVFormatContext = NULL", __func__, __LINE__);
+            return NULL;
+        }
+        av_seek_frame(mAVFormatContext, -1, 0, SEEK_SET);
+        readFrame();
+
+        pthread_mutex_lock(&mMutex);
+        if(mStatus->zStatus != ZM_Release && mLooping == 0)
+        {
+            switchToMediaStatus(mStatus, ZM_Stopped);
+            pthread_cond_wait(&mStopCond, &mMutex);
+        }
+        pthread_mutex_unlock(&mMutex);
+    } while (mStatus->zStatus != ZM_Release);
+
+    pthread_mutex_lock(&mMutex);
+    sws_freeContext(mSwsContext);
+    mSwsContext = NULL;
+
+    if(destroyFFmpeg() == ZMEDIA_FAILURE)
+    {
+        pthread_mutex_unlock(&mMutex);
+        MLOGE("destoryFFmpeg error");
+        return NULL;
     }
+    pthread_mutex_unlock(&mMutex);
+    switchToMediaStatus(mStatus, ZM_Idle);
+    tnl_destroy_thread(mNumLock);
+    MLOGI("decodeThread  exis");
+}
+
+int zc_init() {
+#if FF_API_NEXT
+    av_register_all();
+#endif
+    //apply for space of stack
+    mStatus = initMediaStatus();
+    mNumLock = tnl_create(1);
+    strncpy(mNumLock->stDescription, "DecodeThread", strlen("DecodeThread"));
+    return ZMEDIA_SUCCESS;
+}
+
+void zc_set_data(const char* path) {
+    MLOGI("set_data path[%s]", path);
+    strcpy(mPath, path);
 }
 
 void zc_start_decode() {
-    if(mStatus->zStatus == ZM_Prepared || mStatus->zStatus == ZM_Stopped
-            || mStatus->zStatus == ZM_Completed) {
-        if(mCurFrameData == NULL) {
-            mCurFrameData = malloc(sizeof(FrameData));
-            mCurFrameData->frame = av_frame_alloc();
-            allocFrame(mCurFrameData->frame);
-            mNextFrameData = malloc(sizeof(FrameData));
-            mNextFrameData->frame = av_frame_alloc();
-            allocFrame(mNextFrameData->frame);
-        }
-        switchToMediaStatus(mStatus, ZM_Playing);
+    if(mStatus == NULL)
+    {
+        MLOGE("mStatus == NULL line:[%d]", __LINE__);
+        return;
+    }
 
+    if(mStatus->zStatus == ZM_Idle && tnl_check_create_thread(mNumLock) == RESULT_SUCCESS) {
+        switchToMediaStatus(mStatus, ZM_Initialized);
+        MLOGI("[%s:%d] start thread", __func__, __LINE__);
         int ret = pthread_create(&mTid, NULL, decodeThread, NULL);
         if(ret != 0) {
             MLOGE("thread create error[%d]", ret);
             return;
         }
+        usleep(20);
+    } else if(mStatus->zStatus == ZM_Stopped || mStatus->zStatus == ZM_Completed) {
+        pthread_cond_broadcast(&mStopCond);
     } else if(mStatus->zStatus == ZM_Paused) {
-        if(switchToMediaStatus(mStatus, ZM_Playing) == 1) {
-            pthread_cond_broadcast(&mCond);
-        }
+        pthread_cond_broadcast(&mCond);
     } else {
         MLOGE("decode start error mStatus[%d]", mStatus->zStatus);
     }
@@ -376,17 +482,30 @@ void zc_stop_decode() {
 }
 
 void zc_set_window_rect(int width, int height) {
-    if(width <= 0 || height <= 0) {
+    if(width < 0 || height < 0) {
         MLOGE("set window rect is error width[%d]  height[%d]", width, height);
         return;
     }
-    if(mParamFrame.winWidth == 0) {
-        if(switchToMediaStatus(mStatus, ZM_Initialized) != 1) {
-            switchToMediaStatus(mStatus, ZM_Prepared);
-        }
+    if(width == mParamFrame.winWidth && height == mParamFrame.winHeight)
+    {
+        MLOGE("[%s:%d window rect no change]", __func__, __LINE__);
+        return;
     }
+    if(switchToMediaStatus(mStatus, ZM_Paused))
+    {
+        usleep(500);
+    }
+
+    pthread_mutex_lock(&mMutex);
     mParamFrame.winWidth = width;
     mParamFrame.winHeight = height;
+    computeParamFrame();
+    pthread_mutex_unlock(&mMutex);
+    if(mStatus->zStatus == ZM_Paused)
+    {
+        switchToMediaStatus(mStatus, ZM_Playing);
+        pthread_cond_broadcast(&mCond);
+    }
     MLOGI("windowW[%d] windowH[%d]", mParamFrame.winWidth, mParamFrame.winHeight);
 }
 
@@ -401,22 +520,29 @@ int zc_get_frame_padding(int *top, int *left) {
 }
 
 AVFrame* zc_obtain_frame() {
-//    MLOGI("zc_obtain_frame mStatus[%d]", mStatus);
+    pthread_mutex_lock(&mMutex);
     if(mCurFrameData == NULL) {
         MLOGE("obtain error by CurFrameData not init");
+        pthread_mutex_unlock(&mMutex);
         return NULL;
     }
 
     if(mCurFrameData->state == 0) {
-        MLOGI("Completed");
+        pthread_mutex_unlock(&mMutex);
         return NULL;
     }
+    pthread_mutex_unlock(&mMutex);
     return mCurFrameData->frame;
 }
 
 void zc_free_frame() {
     pthread_mutex_lock(&mMutex);
-
+    if(mCurFrameData == NULL || mNextFrameData == NULL)
+    {
+        MLOGI("ZM free_frame func[%s]%d Data = null", __func__, __LINE__);
+        pthread_mutex_unlock(&mMutex);
+        return;
+    }
     FrameData *tmp = NULL;
     tmp = mCurFrameData;
     mCurFrameData = mNextFrameData;
@@ -439,62 +565,52 @@ int zc_get_space_time() {
 int zc_is_completed() {
     if(mStatus->zStatus == ZM_Paused) {
         return 1;
-    } else if(mStatus->zStatus == ZM_Completed) {
+    } else if(mStatus->zStatus == ZM_Completed || mStatus->zStatus == ZM_Stopping) {
         return 1;
-    } else if(mStatus->zStatus == ZM_Stopped || mStatus->zStatus == ZM_Stopping) {
+    } else if(mStatus->zStatus == ZM_Stopped) {
+        MLOGI("zc_is_completed cur[%d] next[%d]", mCurFrameData->state, mNextFrameData->state);
+        pthread_mutex_lock(&mMutex);
         if(mCurFrameData->state == 0 && mNextFrameData->state == 0) {
             switchToMediaStatus(mStatus, ZM_Completed);
+            pthread_mutex_unlock(&mMutex);
             return 1;
         }
+        pthread_mutex_unlock(&mMutex);
     }
     return 0;
 }
 
 int zc_destroy() {
-    if(switchToMediaStatus(mStatus, ZM_Idle) != 1) {
-        MLOGE("destroy error status[%d]", mStatus->zStatus);
-        return ZMEDIA_FAILURE;
+    MLOGI("ZM destroy func[%s]%d status[%d]", __func__, __LINE__, mStatus->zStatus);
+    if(mStatus->zStatus == ZM_Release || mStatus->zStatus == ZM_Idle)
+    {
+        MLOGE("ZM destroy func[%s]%d status[%d] is error ", __func__, __LINE__, mStatus->zStatus);
+        return ZMEDIA_SUCCESS;
     }
+    setMediaStatus(mStatus, ZM_Release);
+    pthread_cond_broadcast(&mCond);
+    pthread_cond_broadcast(&mStopCond);
 
-    //release space of stack
-    if(mCurFrameData != NULL) {
-        av_frame_free(&(mCurFrameData->frame));
-        free(mCurFrameData);
-        mCurFrameData = NULL;
+    while (mStatus->zStatus != ZM_Idle) {
+        MLOGI("wait status for idle");
+        usleep(20);
     }
-
-    if(mNextFrameData != NULL) {
-        av_frame_free(&(mNextFrameData->frame));
-        free(mNextFrameData);
-        mNextFrameData = NULL;
-    }
-
-    if(mSwsContext != NULL) {
-        sws_freeContext(mSwsContext);
-        mSwsContext = NULL;
-    }
-
-    if(mAVCodecContext != NULL) {
-        avcodec_close(mAVCodecContext);
-        avcodec_free_context(&mAVCodecContext);
-        mAVCodecContext = NULL;
-    }
-
-    if(mAVFormatContext != NULL) {
-        avformat_close_input(&mAVFormatContext);
-        avformat_free_context(mAVFormatContext);
-        mAVFormatContext = NULL;
-    }
-
+    pthread_mutex_lock(&mMutex);
+    freeFrame(mCurFrameData);
+    mCurFrameData = NULL;
+    freeFrame(mNextFrameData);
+    mNextFrameData = NULL;
+    pthread_mutex_unlock(&mMutex);
+    usleep(20);
     MLOGI("destroy success");
     return ZMEDIA_SUCCESS;
 }
 
 void zc_set_break_frame(int length, long *frames) {
-    if(mBreakPoints == NULL) {
-        mBreakPoints = (BREAK_POINT_S *)malloc(sizeof(BREAK_POINT_S));
-    }
-    MLOGI("zc_set_break_frame length[%d]", length);
-    mBreakPoints->length = length;
-    mBreakPoints->frames = frames;
+//    if(mBreakPoints == NULL) {
+//        mBreakPoints = (BREAK_POINT_S *)malloc(sizeof(BREAK_POINT_S));
+//    }
+//    MLOGI("zc_set_break_frame length[%d]", length);
+//    mBreakPoints->length = length;
+//    mBreakPoints->frames = frames;
 }
